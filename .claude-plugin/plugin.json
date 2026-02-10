@@ -1,0 +1,13 @@
+{
+  "name": "skills-fabrik-patterns",
+  "version": "1.0.0",
+  "description": "Skills-Fabrik patterns: TAGs System, Quality Gates, Handoff, Health Check",
+  "author": {
+    "name": "Felipe González",
+    "url": "https://github.com/felipegonzalez"
+  },
+  "license": "MIT",
+  "keywords": ["patterns", "quality", "handoff", "tags", "skills-fabrik"],
+  "hooks": ["SessionStart", "UserPromptSubmit", "Stop", "PreCompact"],
+  "python": ">=3.10"
+}

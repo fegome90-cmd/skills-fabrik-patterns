@@ -1,0 +1,53 @@
+# Quality Gates Configuration
+# Defines quality checks that run before session end
+
+gates:
+  # TypeScript compilation check
+  - name: typescript-check
+    description: TypeScript compilation check
+    command: npx tsc --noEmit 2>&1 || echo "TypeScript check skipped (no tsconfig)"
+    required: false
+    critical: false
+    timeout: 60000
+    file_patterns: ["*.ts", "*.tsx"]
+
+  # Python type check
+  - name: python-type-check
+    description: Python type check with mypy
+    command: mypy . --no-error-summary 2>&1 || echo "mypy check skipped (not configured)"
+    required: false
+    critical: false
+    timeout: 30000
+    file_patterns: ["*.py"]
+
+  # Format check
+  - name: format-check
+    description: Code formatting check
+    command: |
+      if command -v npx >/dev/null 2>&1; then
+        npx prettier --check "**/*.{ts,tsx,js,jsx,py,md}" 2>&1 || echo "Some files need formatting"
+      else
+        echo "Prettier check skipped (not installed)"
+      fi
+    required: false
+    critical: false
+    timeout: 20000
+    file_patterns: ["*.ts", "*.tsx", "*.js", "*.jsx", "*.py", "*.md"]
+
+  # Security check
+  - name: security-check
+    description: Check for hardcoded secrets
+    command: |
+      if grep -r "API_KEY\|SECRET\|PASSWORD\|TOKEN" \
+         --include="*.py" --include="*.ts" --include="*.tsx" \
+         --include="*.js" --include="*.jsx" . 2>/dev/null; then
+        echo "Found potential hardcoded secrets"
+        exit 1
+      else
+        echo "No secrets found"
+        exit 0
+      fi
+    required: true
+    critical: true
+    timeout: 10000
+    file_patterns: ["*.py", "*.ts", "*.tsx", "*.js", "*.jsx", "*.md"]

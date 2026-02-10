@@ -1,0 +1,21 @@
+# Evidence Validation Configuration
+# Pre-activation checks before starting work on a project
+
+validation:
+  timeout: 30000  # 30 seconds total
+  fail_fast: true  # Stop on first critical failure
+  parallel: true  # Run checks in parallel (when implemented)
+
+# Default validation checks
+checks:
+  - name: project-structure
+    description: Verify project structure is valid
+    critical: false
+
+  - name: dependencies-check
+    description: Check if dependencies are installed
+    critical: false
+
+  - name: config-files
+    description: Verify required config files exist
+    critical: false

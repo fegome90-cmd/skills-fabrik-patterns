@@ -1,0 +1,19 @@
+# Quality Alerts Configuration
+# Defines thresholds for alert escalation
+
+thresholds:
+  critical:
+    failure_rate: 0.5  # 50% gates failed
+    timeout_rate: 0.3  # 30% gates timed out
+
+  high:
+    failure_rate: 0.2  # 20% gates failed
+    timeout_rate: 0.1  # 10% timed out
+
+  medium:
+    failure_rate: 0.1  # 10% gates failed
+    timeout_rate: 0.05  # 5% timed out
+
+  low:
+    failure_rate: 0.05  # 5% gates failed
+    timeout_rate: 0.02  # 2% timed out
