@@ -106,8 +106,9 @@ def format_file(file_path: Path) -> bool:
 
         return _was_formatted(result)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
-        # Log to stderr for debugging (non-blocking)
-        print(f"⚠️ Auto-format failed for {file_path.name}: {e}", file=sys.stderr)
+        # Log error properly - NEVER silently fail
+        import logging
+        logging.error(f"Auto-format failed for {file_path.name}: {e}", exc_info=True)
         return False
 
 

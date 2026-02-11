@@ -73,8 +73,16 @@ class QualityGateRunner:
             config_path: Path to gates.yaml config file
         """
         import yaml
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
+        from yaml import YAMLError
+
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+        except (YAMLError, OSError) as e:
+            # Log error properly - NEVER silently fail
+            import logging
+            logging.error(f"Failed to load quality gates config from {config_path}: {e}", exc_info=True)
+            raise
 
         self.gates = [
             QualityGate(

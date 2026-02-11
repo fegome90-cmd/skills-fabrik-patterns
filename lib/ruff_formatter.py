@@ -118,7 +118,9 @@ class RuffFormatter:
                 output=result.stdout + result.stderr,
                 exit_code=result.returncode
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError, OSError) as e:
+            import logging
+            logging.error(f"Ruff format failed for {file_path}: {e}", exc_info=True)
             return self._handle_subprocess_error(e, "ruff format")
 
     def check_and_fix(
@@ -180,7 +182,9 @@ class RuffFormatter:
                 output=output,
                 exit_code=result.returncode
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError, OSError) as e:
+            import logging
+            logging.error(f"Ruff check failed: {e}", exc_info=True)
             return self._handle_subprocess_error(e, "ruff check")
 
     def format_and_check(self, file_path: Path) -> RuffResult:
@@ -218,5 +222,7 @@ class RuffFormatter:
                 timeout=5
             )
             return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError, OSError) as e:
+            import logging
+            logging.debug(f"Ruff availability check failed: {e}")
             return False

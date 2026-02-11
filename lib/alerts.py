@@ -83,8 +83,16 @@ class QualityAlerts:
         Args:
             config_path: Path to alerts.yaml config file
         """
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
+        from yaml import YAMLError
+        import logging
+
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                self.config = yaml.safe_load(f)
+        except (YAMLError, OSError) as e:
+            # Log error properly - NEVER silently fail
+            logging.error(f"Failed to load alerts config from {config_path}: {e}", exc_info=True)
+            raise
 
         self.thresholds = self.config.get('thresholds', {})
 

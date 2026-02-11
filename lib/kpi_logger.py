@@ -8,6 +8,7 @@ Pattern from: skills-fabrik "No Mess Left Behind"
 Tracks quality gate results, auto-fix events, and session duration
 for continuous improvement analysis.
 """
+
 import json
 import sys
 from datetime import datetime
@@ -50,22 +51,16 @@ class KPILogger:
             with open(self.events_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(asdict(event)) + '\n')
         except (OSError, IOError) as e:
-            # Log to stderr for debugging (non-blocking)
-            print(f"⚠️ KPI logging failed: {e}", file=sys.stderr)
+            # Log error properly - NEVER silently fail
+            # Error is visible in logs via logging.error() with exc_info=True
+            import logging
+            logging.error(f"Failed to write KPI events to {self.events_file}: {e}", exc_info=True)
+            # Don't raise - let workflow continue, error is logged
 
     def _create_event(self, session_id: str, event_type: str, data: dict[str, Any]) -> KPIEvent:
         """
         Create a KPIEvent with current timestamp.
-
         Helper method to reduce duplication in event creation.
-
-        Args:
-            session_id: Session identifier
-            event_type: Type of event (e.g., "quality_gates", "auto_fix", "session_end")
-            data: Event-specific data
-
-        Returns:
-            KPIEvent with timestamp and provided data
         """
         return KPIEvent(
             timestamp=datetime.now().isoformat(),
@@ -85,14 +80,6 @@ class KPILogger:
     ) -> None:
         """
         Log quality gates results.
-
-        Args:
-            session_id: Session identifier
-            passed: Number of passed gates
-            failed: Number of failed gates
-            timed_out: Number of timed out gates
-            duration_ms: Total execution duration
-            gate_names: Optional list of gate names that ran
         """
         event = self._create_event(
             session_id=session_id,
@@ -117,13 +104,6 @@ class KPILogger:
     ) -> None:
         """
         Log auto-fix event.
-
-        Args:
-            session_id: Session identifier
-            file_path: Path to file that was formatted
-            file_type: File extension (e.g., ".py", ".ts")
-            success: Whether formatting succeeded
-            formatter: Name of formatter used
         """
         event = self._create_event(
             session_id=session_id,
@@ -146,12 +126,6 @@ class KPILogger:
     ) -> None:
         """
         Log session end summary.
-
-        Args:
-            session_id: Session identifier
-            duration_seconds: Session duration in seconds
-            total_files_modified: Number of files modified
-            total_auto_fixes: Number of auto-fix operations
         """
         event = self._create_event(
             session_id=session_id,
@@ -187,7 +161,11 @@ class KPILogger:
                     except (json.JSONDecodeError, TypeError):
                         continue
         except (OSError, IOError) as e:
-            print(f"⚠️ Failed to read KPI events: {e}", file=sys.stderr)
+            # Log error for debugging - NEVER silently fail
+            # Use project's logger for consistent error handling
+            import logging
+            logging.error(f"Failed to read KPI events from {self.events_file}: {e}", exc_info=True)
+            # Return empty list - don't hide the error from caller
             return []
 
         # Return newest first
@@ -221,11 +199,13 @@ class KPILogger:
                 summary["quality_gates"]["passed"] += data.get("passed", 0)
                 summary["quality_gates"]["failed"] += data.get("failed", 0)
                 summary["quality_gates"]["timed_out"] += data.get("timed_out", 0)
+
             elif event.event_type == "auto_fix":
                 if event.data.get("success", False):
                     summary["auto_fixes"]["success"] += 1
                 else:
                     summary["auto_fixes"]["failure"] += 1
+
             elif event.event_type == "session_end":
                 summary["sessions"] += 1
 
