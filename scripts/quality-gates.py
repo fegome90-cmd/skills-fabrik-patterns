@@ -15,6 +15,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 # Add lib directory to path
 lib_dir = Path(__file__).parent.parent / "lib"
@@ -24,7 +25,7 @@ from quality_gates import QualityGateRunner, QualityGatesOrchestrator
 from alerts import QualityAlerts
 
 
-async def run_quality_gates(project_path: Path, changed_files: list[str]) -> tuple:
+async def run_quality_gates(project_path: Path, changed_files: list[str]) -> tuple[list[Any], list[Any]]:
     """Run quality gates and return results with alerts."""
     plugin_root = Path(__file__).parent.parent
 
@@ -99,6 +100,25 @@ def main() -> int:
         print(f"  {emoji_val} {result.gate_name} ({result.duration_ms}ms)")
         if result.error:
             print(f"     {result.error[:100]}")
+
+    # Agregar hints de resolución para gates fallidos
+    if failed > 0:
+        print("\n💡 Suggested fixes:")
+        for result in results:
+            if result.status.value == "failed":
+                if result.gate_name == "format-check":
+                    print(f"   npx prettier --write **/*{{ts,tsx,js,jsx,md}}")
+                    print(f"   ruff format .  # Para archivos Python")
+                elif result.gate_name == "python-type-check":
+                    print(f"   ruff check --fix .  # Formatear + lint Python")
+                    print(f"   mypy . --ignore-missing-imports  # Type check")
+                elif result.gate_name == "security-check":
+                    print(f"   # Review hardcoded secrets in output above")
+                elif result.gate_name == "typecheck-check":
+                    print(f"   npx tsc --noEmit  # TypeScript type check")
+                elif result.gate_name == "build-check":
+                    print(f"   # Review build errors in output above")
+                break  # Only show first failure's hint
 
     # Print alerts if any
     if alerts:

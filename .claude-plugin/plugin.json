@@ -8,6 +8,6 @@
   },
   "license": "MIT",
   "keywords": ["patterns", "quality", "handoff", "tags", "skills-fabrik"],
-  "hooks": ["SessionStart", "UserPromptSubmit", "Stop", "PreCompact"],
+  "hooks": ["SessionStart", "UserPromptSubmit", "Stop", "PreCompact", "PostToolUse"],
   "python": ">=3.10"
 }

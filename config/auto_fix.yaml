@@ -1,0 +1,84 @@
+# Auto-Fix Configuration
+# Controla qué formatters se aplican automáticamente
+# Pattern from: skills-fabrik "No Mess Left Behind"
+
+# Global enable/disable
+enabled: true
+
+# Timeout para cada formatter (segundos)
+timeout: 15
+
+# Formatters por extensión
+formatters:
+  typescript:
+    enabled: true
+    extensions: ['.ts', '.tsx']
+    command: 'npx prettier --write'
+
+  javascript:
+    enabled: true
+    extensions: ['.js', '.jsx']
+    command: 'npx prettier --write'
+
+  python:
+    enabled: true
+    extensions: ['.py']
+    command: 'ruff format'
+    description: 'Python formatter (replaces black, flake8, isort)'
+
+  markdown:
+    enabled: true
+    extensions: ['.md']
+    command: 'npx prettier --write'
+
+  yaml:
+    enabled: true
+    extensions: ['.yaml', '.yml']
+    command: 'npx prettier --write'
+
+  json:
+    enabled: true
+    extensions: ['.json']
+    command: 'npx prettier --write'
+
+# Excluir directorios (no se formatean archivos dentro)
+exclude_dirs:
+  - '.venv'
+  - 'venv'
+  - '.virtualenv'
+  - 'node_modules'
+  - '.pytest_cache'
+  - '__pycache__'
+  - '.tox'
+  - '.eggs'
+  - '*.egg-info'
+  - 'dist'
+  - 'build'
+  - '.git'
+  - '.mypy_cache'
+  - '.ruff_cache'
+  - '.next'
+  - '.nuxt'
+  - 'target'
+  - 'bin'
+  - 'obj'
+
+# Excluir archivos específicos por patrón
+exclude_patterns:
+  - '*.min.js'
+  - '*.min.css'
+  - '*.bundle.js'
+  - '*.chunk.js'
+  - 'package-lock.json'
+  - 'yarn.lock'
+  - 'pnpm-lock.yaml'
+  - 'poetry.lock'
+  - 'Pipfile.lock'
+
+# Opciones adicionales
+options:
+  # Si es true, muestra mensajes de stderr al formatear
+  verbose: false
+
+  # Si es true, crea backup antes de formatear (no implementado aún)
+  backup: false

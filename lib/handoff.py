@@ -140,8 +140,13 @@ class HandoffProtocol:
         Returns:
             Path to saved handoff file
         """
-        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-        filename = f"handoff-{timestamp}.md"
+        # Extract timestamp from handoff, or use current time
+        handoff_ts = datetime.fromisoformat(handoff.timestamp)
+        timestamp = handoff_ts.strftime('%Y%m%d-%H%M%S')
+
+        # Add session ID suffix to avoid collisions
+        session_suffix = handoff.from_session if handoff.from_session != 'current' else 'now'
+        filename = f"handoff-{timestamp}-{session_suffix}.md"
         handoff_path = self.handoff_dir / filename
 
         # Save markdown version
@@ -183,3 +188,35 @@ class HandoffProtocol:
             reverse=True
         )
         return handoffs[:limit]
+
+    def cleanup_old_handoffs(self, keep: int = 30) -> int:
+        """
+        Remove old handoffs, keeping only the most recent.
+
+        Args:
+            keep: Number of handoffs to keep (default 30)
+
+        Returns:
+            Number of handoff files removed (both .md and .json)
+        """
+        # Find all .md files (excluding .json files)
+        handoff_files = sorted(
+            [f for f in self.handoff_dir.glob("handoff-*.md") if not f.name.endswith('.json.md')],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True  # Newest first
+        )
+
+        removed = 0
+        for handoff_file in handoff_files[keep:]:
+            # Remove both .md and .json files
+            if handoff_file.is_file():
+                handoff_file.unlink()
+                removed += 1
+
+            # Also remove the corresponding .json file
+            json_file = handoff_file.with_suffix(handoff_file.suffix + '.json')
+            if json_file.is_file():
+                json_file.unlink()
+                removed += 1
+
+        return removed

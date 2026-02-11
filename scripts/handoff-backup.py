@@ -14,6 +14,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 # Add lib directory to path
 lib_dir = Path(__file__).parent.parent / "lib"
@@ -23,18 +24,22 @@ from handoff import HandoffProtocol
 from backup import StateBackup
 
 
-def create_handoff_from_context() -> dict:
+def create_handoff_from_context() -> dict[str, Any]:
     """Create handoff from current context files."""
+    from typing import Any
+
     claude_dir = Path.home() / ".claude"
     context_dir = claude_dir / ".context"
 
-    session_data = {
+    notes = f"Session end backup - {datetime.now().isoformat()}"
+
+    session_data: dict[str, Any] = {
         'session_id': datetime.now().strftime('%Y%m%d-%H%M%S'),
         'completed_tasks': [],
         'next_steps': [],
         'artifacts': [],
         'context': {},
-        'notes': f"Session end backup - {datetime.now().isoformat()}"
+        'notes': notes
     }
 
     # Try to extract information from context files
@@ -44,11 +49,12 @@ def create_handoff_from_context() -> dict:
 
         # Look for project info
         if "Projects" in content:
-            session_data['context']['projects_mentioned'] = True
+            session_data['context'] = {'projects_mentioned': True}
 
         # Look for recent work
         if "## Recent Work" in content or "## Current Work" in content:
-            session_data['notes'] += "\nRecent work section found in CLAUDE.md"
+            notes += "\nRecent work section found in CLAUDE.md"
+            session_data['notes'] = notes
 
     # Get any files in current directory as artifacts
     cwd = Path.cwd()
@@ -100,9 +106,14 @@ def main() -> int:
     print(f"   - Restore: {backup_metadata.restore_command}")
 
     # 3. Cleanup old backups
-    removed = backup_system.cleanup_old_backups(keep=10)
-    if removed > 0:
-        print(f"🧹 Cleaned up {removed} old backups")
+    removed_backups = backup_system.cleanup_old_backups(keep=10)
+    if removed_backups > 0:
+        print(f"🧹 Cleaned up {removed_backups} old backups")
+
+    # 4. Cleanup old handoffs
+    removed_handoffs = handoff_protocol.cleanup_old_handoffs(keep=30)
+    if removed_handoffs > 0:
+        print(f"🧹 Cleaned up {removed_handoffs} old handoff files")
 
     return 0
 

@@ -248,6 +248,37 @@ class TestHandoff:
         assert len(tasks) == 2
         assert "First task" in tasks[0]
 
+    def test_cleanup_old_handoffs(self, tmp_path):
+        """Test cleanup of old handoffs, keeping only the most recent."""
+        protocol = HandoffProtocol(claude_dir=tmp_path)
+
+        # Create multiple handoffs with unique timestamps
+        import time
+        base_time = datetime.now()
+        for i in range(5):
+            # Each handoff gets a unique timestamp
+            handoff_time = base_time.replace(second=i)
+            handoff = Handoff(
+                from_session=f'test-{i}',  # Unique session ID
+                to_session='next',
+                completed_tasks=[],
+                next_steps=[],
+                artifacts=[],
+                timestamp=handoff_time.isoformat(),
+                context_snapshot={}
+            )
+            protocol.save_handoff(handoff)
+
+        # Keep only 2, should remove 3 (both .md and .json pairs)
+        removed = protocol.cleanup_old_handoffs(keep=2)
+        assert removed == 6  # 3 handoffs * 2 files each
+
+        # Verify only 2 handoff pairs remain
+        handoff_files = list(tmp_path.glob("handoffs/handoff-*.md"))
+        # Filter out .json.md files if any
+        handoff_files = [f for f in handoff_files if not f.name.endswith('.json.md')]
+        assert len(handoff_files) == 2
+
 
 class TestBackup:
     """Test backup and rollback functionality."""

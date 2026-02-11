@@ -45,7 +45,7 @@ def main() -> int:
     validation_results = evidence_cli.validate(project_path)
 
     # Build output for Claude Code
-    output = {
+    output: dict[str, list[dict[str, str]]] = {
         "additionalContext": []
     }
 

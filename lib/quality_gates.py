@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Callable, Awaitable
 import asyncio
 
+from logger import get_logger, LogLevel, log_execution, log_async_execution
+
+# Module logger
+logger = get_logger(__name__)
+
 
 class GateStatus(Enum):
     """Quality gate execution status."""
@@ -59,6 +64,7 @@ class GateExecutionResult:
 class QualityGateRunner:
     """Executes quality gates with filtering and orchestration."""
 
+    @log_execution(level=LogLevel.DEBUG, log_args=False)
     def __init__(self, config_path: Path):
         """
         Initialize gate runner from config file.
@@ -82,6 +88,10 @@ class QualityGateRunner:
             )
             for g in config.get('gates', [])
         ]
+        logger.debug(
+            f"Loaded {len(self.gates)} quality gates from {config_path}",
+            gate_count=len(self.gates)
+        )
 
     def _should_run(self, gate: QualityGate, files: list[str]) -> bool:
         """Check if gate should run based on changed files."""
@@ -105,6 +115,13 @@ class QualityGateRunner:
         """Execute a single quality gate."""
         start = time.time()
 
+        logger.debug(
+            f"Executing gate: {gate.name}",
+            gate_name=gate.name,
+            command=gate.command,
+            timeout_ms=gate.timeout
+        )
+
         try:
             result = subprocess.run(
                 gate.command,
@@ -118,6 +135,12 @@ class QualityGateRunner:
             duration = int((time.time() - start) * 1000)
 
             if result.returncode == 0:
+                logger.info(
+                    f"Gate passed: {gate.name}",
+                    gate_name=gate.name,
+                    duration_ms=duration,
+                    status="PASSED"
+                )
                 return GateExecutionResult(
                     gate_name=gate.name,
                     status=GateStatus.PASSED,
@@ -125,6 +148,13 @@ class QualityGateRunner:
                     output=result.stdout
                 )
             else:
+                logger.warning(
+                    f"Gate failed: {gate.name}",
+                    gate_name=gate.name,
+                    duration_ms=duration,
+                    status="FAILED",
+                    error_preview=(result.stderr or result.stdout)[:100]
+                )
                 return GateExecutionResult(
                     gate_name=gate.name,
                     status=GateStatus.FAILED,
@@ -135,6 +165,12 @@ class QualityGateRunner:
 
         except subprocess.TimeoutExpired:
             duration = int((time.time() - start) * 1000)
+            logger.error(
+                f"Gate timeout: {gate.name}",
+                gate_name=gate.name,
+                duration_ms=duration,
+                timeout_limit=gate.timeout
+            )
             return GateExecutionResult(
                 gate_name=gate.name,
                 status=GateStatus.TIMEOUT,
@@ -144,6 +180,13 @@ class QualityGateRunner:
             )
         except Exception as e:
             duration = int((time.time() - start) * 1000)
+            logger.error(
+                f"Gate error: {gate.name}",
+                gate_name=gate.name,
+                duration_ms=duration,
+                error=str(e),
+                error_type=type(e).__name__
+            )
             return GateExecutionResult(
                 gate_name=gate.name,
                 status=GateStatus.FAILED,
@@ -185,13 +228,28 @@ class QualityGatesOrchestrator:
         cwd: Path
     ) -> list[GateExecutionResult]:
         """Execute gates based on orchestrator configuration."""
+        logger.debug(
+            "Starting gate execution",
+            total_gates=len(gates),
+            changed_files_count=len(changed_files),
+            parallel=self.parallel,
+            fail_fast=self.fail_fast
+        )
+
         # Filter gates that should run
         relevant_gates = [
             gate for gate in gates
             if runner._should_run(gate, changed_files)
         ]
 
+        logger.debug(
+            f"Filtered to {len(relevant_gates)} relevant gates",
+            relevant_count=len(relevant_gates),
+            skipped_count=len(gates) - len(relevant_gates)
+        )
+
         if not relevant_gates:
+            logger.info("No relevant gates to execute")
             return []
 
         if self.parallel:
@@ -206,6 +264,11 @@ class QualityGatesOrchestrator:
         cwd: Path
     ) -> list[GateExecutionResult]:
         """Execute gates in parallel with timeout."""
+        logger.debug(
+            f"Executing {len(gates)} gates in parallel",
+            gate_count=len(gates),
+            max_workers=self.max_workers
+        )
         results = []
 
         # Create async tasks for each gate
@@ -227,6 +290,11 @@ class QualityGatesOrchestrator:
                 timeout=self.timeout / 1000
             )
         except asyncio.TimeoutError:
+            logger.error(
+                "Global timeout exceeded for parallel gate execution",
+                timeout_ms=self.timeout,
+                gate_count=len(gates)
+            )
             # Mark all incomplete as timeout
             results = [
                 GateExecutionResult(
@@ -241,8 +309,17 @@ class QualityGatesOrchestrator:
 
         # Process results
         processed: list[GateExecutionResult] = []
+        passed = 0
+        failed = 0
+        timed_out = 0
+
         for i, result in enumerate(results):
             if isinstance(result, Exception):
+                logger.error(
+                    f"Exception during gate execution: {gates[i].name}",
+                    gate_name=gates[i].name,
+                    error=str(result)
+                )
                 processed.append(GateExecutionResult(
                     gate_name=gates[i].name,
                     status=GateStatus.FAILED,
@@ -250,10 +327,25 @@ class QualityGatesOrchestrator:
                     output="",
                     error=str(result)
                 ))
+                failed += 1
             else:
                 # Type narrowing: result is GateExecutionResult here
                 assert isinstance(result, GateExecutionResult), f"Unexpected type: {type(result)}"
                 processed.append(result)
+                if result.status == GateStatus.PASSED:
+                    passed += 1
+                elif result.status == GateStatus.TIMEOUT:
+                    timed_out += 1
+                else:
+                    failed += 1
+
+        logger.info(
+            "Parallel gate execution complete",
+            total=len(processed),
+            passed=passed,
+            failed=failed,
+            timed_out=timed_out
+        )
 
         return processed
 
