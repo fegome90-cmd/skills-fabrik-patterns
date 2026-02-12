@@ -254,10 +254,11 @@ class TestHandoff:
 
         # Create multiple handoffs with unique timestamps
         import time
+        # Use timestamp with microseconds for uniqueness
         base_time = datetime.now()
         for i in range(5):
-            # Each handoff gets a unique timestamp
-            handoff_time = base_time.replace(second=i)
+            # Each handoff gets a unique timestamp (microseconds differ)
+            handoff_time = base_time.replace(microsecond=i * 100000)
             handoff = Handoff(
                 from_session=f'test-{i}',  # Unique session ID
                 to_session='next',
