@@ -27,7 +27,16 @@ class KPIEvent:
 
 
 class KPILogger:
-    """Logger for KPI events."""
+    """Logger for tracking KPI metrics.
+
+    Provides persistent logging to ~/.claude/kpis/events.jsonl for
+    continuous improvement analysis of code quality, auto-fix performance,
+    and session duration.
+
+    Attributes:
+        kpis_dir: Directory for KPI storage
+        events_file: Path to events.jsonl
+    """
 
     def __init__(self, kpis_dir: Path | None = None):
         """
