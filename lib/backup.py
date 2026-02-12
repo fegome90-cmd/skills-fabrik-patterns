@@ -12,6 +12,11 @@ from datetime import datetime
 from pathlib import Path
 import shutil
 import json
+import uuid
+import logging
+
+# Get module logger
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,23 @@ class BackupMetadata:
 
 class StateBackup:
     """Manages state backups and restoration."""
+
+    def _generate_backup_id(self) -> str:
+        """
+        Generate unique backup ID with collision resistance.
+
+        Uses UUID4 for guaranteed uniqueness + timestamp for ordering.
+        UUID4 provides ~5.3×10^36 possible values, making collisions
+        virtually impossible. No artificial delays needed.
+
+        Returns:
+            Unique backup ID string (format: YYYYMMDD-HHMMSS_{uuid4})
+        """
+        # UUID4 for guaranteed uniqueness (NOT dependent on timestamp)
+        unique_id = uuid.uuid4()
+        # Timestamp only for ordering/sorting, NOT for uniqueness
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        return f"{timestamp}_{unique_id}"
 
     def __init__(self, backup_dir: Path | None = None):
         """
@@ -52,7 +74,7 @@ class StateBackup:
         Returns:
             Backup metadata
         """
-        backup_id = datetime.now().strftime('%Y%m%d-%H%M%S')
+        backup_id = self._generate_backup_id()
         backup_path = self.backup_dir / backup_id
         backup_path.mkdir(exist_ok=True)
 
@@ -82,7 +104,11 @@ class StateBackup:
 
         # Save metadata
         metadata_path = backup_path / "metadata.json"
-        metadata_path.write_text(json.dumps(metadata.__dict__, indent=2))
+        try:
+            metadata_path.write_text(json.dumps(metadata.__dict__, indent=2))
+        except (OSError, IOError) as e:
+            logger.error(f"Failed to write backup metadata to {metadata_path}: {e}", exc_info=True)
+            raise  # Re-raise since metadata is critical
 
         return metadata
 
@@ -103,22 +129,31 @@ class StateBackup:
 
         metadata_path = backup_path / "metadata.json"
         if not metadata_path.exists():
+            logger.warning(f"Backup metadata file not found: {metadata_path}")
             return False
 
-        metadata = json.loads(metadata_path.read_text())
+        try:
+            metadata = json.loads(metadata_path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to read backup metadata from {metadata_path}: {e}", exc_info=True)
+            return False
 
         # Restore files
         for file_path in metadata['files_backed_up']:
             backup_file = backup_path / Path(file_path).name
 
             if not backup_file.exists():
+                logger.warning(f"Backup file not found: {backup_file}")
                 continue
 
             # Create parent directories if needed
             dest = Path(file_path)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-
-            shutil.copy2(backup_file, dest)
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(backup_file, dest)
+            except (OSError, IOError) as e:
+                logger.error(f"Failed to restore {dest} from backup: {e}", exc_info=True)
+                # Continue with other files
 
         return True
 
@@ -149,7 +184,8 @@ class StateBackup:
             try:
                 metadata = json.loads(metadata_path.read_text())
                 backups.append(BackupMetadata(**metadata))
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"Failed to load metadata from {metadata_path}: {e}")
                 continue
 
             if len(backups) >= limit:
@@ -202,7 +238,10 @@ class StateBackup:
         removed = 0
         for backup_dir in backups[keep:]:
             if backup_dir.is_dir():
-                shutil.rmtree(backup_dir)
-                removed += 1
+                try:
+                    shutil.rmtree(backup_dir)
+                    removed += 1
+                except (OSError, IOError) as e:
+                    logger.error(f"Failed to remove old backup {backup_dir}: {e}", exc_info=True)
 
         return removed

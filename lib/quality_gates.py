@@ -20,6 +20,17 @@ from logger import get_logger, LogLevel, log_execution, log_async_execution
 # Module logger
 logger = get_logger(__name__)
 
+# Security: Allowed commands for quality gates
+ALLOWED_COMMANDS = {
+    "ruff",
+    "mypy",
+    "pytest",
+    "black",
+    "isort",
+    "bandit",
+    "pylint",
+}
+
 
 class GateStatus(Enum):
     """Quality gate execution status."""
@@ -65,12 +76,13 @@ class QualityGateRunner:
     """Executes quality gates with filtering and orchestration."""
 
     @log_execution(level=LogLevel.DEBUG, log_args=False)
-    def __init__(self, config_path: Path):
+    def __init__(self, config_path: Path, tier: str = "deep"):
         """
         Initialize gate runner from config file.
 
         Args:
             config_path: Path to gates.yaml config file
+            tier: Tier to load gates from ("fast" or "deep", default: "deep")
         """
         import yaml
         from yaml import YAMLError
@@ -84,6 +96,10 @@ class QualityGateRunner:
             logging.error(f"Failed to load quality gates config from {config_path}: {e}", exc_info=True)
             raise
 
+        # Load gates from specified tier or fall back to legacy flat format
+        gates_config = self._get_gates_for_tier(config, tier)
+        self.tier = tier
+
         self.gates = [
             QualityGate(
                 name=g['name'],
@@ -94,8 +110,45 @@ class QualityGateRunner:
                 timeout=g.get('timeout', 60000),
                 file_patterns=g.get('file_patterns')
             )
-            for g in config.get('gates', [])
+            for g in gates_config
         ]
+
+        logger.debug(
+            f"Loaded {len(self.gates)} quality gates from {config_path} (tier: {tier})",
+            gate_count=len(self.gates),
+            tier=tier
+        )
+
+    def _get_gates_for_tier(self, config: dict, tier: str) -> list:
+        """
+        Extract gates configuration for specified tier.
+
+        Args:
+            config: Full YAML config dictionary
+            tier: Tier name ("fast" or "deep")
+
+        Returns:
+            List of gate configurations
+        """
+        # New tiered format
+        if 'tiers' in config:
+            tiers_config = config['tiers']
+            if tier in tiers_config:
+                return tiers_config[tier].get('gates', [])
+            else:
+                logger.warning(f"Tier '{tier}' not found in config, available: {list(tiers_config.keys())}")
+                # Fall back to fast tier for unknown tier
+                if 'fast' in tiers_config:
+                    return tiers_config['fast'].get('gates', [])
+                return []
+
+        # Legacy flat format (for backward compatibility)
+        if 'gates' in config:
+            logger.debug("Using legacy flat gates format")
+            return config['gates']
+
+        logger.warning("No gates found in config")
+        return []
         logger.debug(
             f"Loaded {len(self.gates)} quality gates from {config_path}",
             gate_count=len(self.gates)
@@ -119,6 +172,98 @@ class QualityGateRunner:
 
         return False
 
+    def _validate_command(self, command: str) -> bool:
+        """
+        Validate command against security whitelist.
+
+        Prevents command injection by ensuring only allowed base commands
+        are used and no dangerous characters are present.
+
+        Args:
+            command: Command string from YAML config
+
+        Returns:
+            True if command is valid
+
+        Raises:
+            ValueError: If command contains dangerous patterns or uses disallowed command
+        """
+        import re
+
+        # Extract base command (first word)
+        cmd_parts = command.split()
+        if not cmd_parts:
+            raise ValueError("Command cannot be empty")
+
+        base_cmd = cmd_parts[0]
+
+        # Check against whitelist
+        if base_cmd not in ALLOWED_COMMANDS:
+            raise ValueError(
+                f"Command '{base_cmd}' is not in allowed list. "
+                f"Allowed commands: {', '.join(sorted(ALLOWED_COMMANDS))}"
+            )
+
+        # Check for dangerous shell characters
+        dangerous_chars = ["|", "&", ";", "$", "(", ")", "<", ">", "`", "\n", "\r"]
+        for char in dangerous_chars:
+            if char in command:
+                raise ValueError(
+                    f"Dangerous character '{char}' detected in command. "
+                    f"This could indicate a command injection attempt."
+                )
+
+        # Check for suspicious patterns
+        suspicious_patterns = ["&&", "||", ">>", "<<"]
+        for pattern in suspicious_patterns:
+            if pattern in command:
+                raise ValueError(
+                    f"Suspicious pattern '{pattern}' detected in command. "
+                    f"This could indicate a command injection attempt."
+                )
+
+        return True
+
+    def _sanitize_output(self, output: str) -> str:
+        """
+        Sanitize command output to prevent logging potential secrets.
+
+        Args:
+            output: Raw command output (stdout/stderr)
+
+        Returns:
+            Sanitized output with secrets and paths redacted
+        """
+        if not output:
+            return ""
+
+        # Secret patterns to redact
+        secret_patterns = [
+            "api_key", "apikey", "api-key",
+            "token", "access_token",
+            "password", "passwd",
+            "secret", "private_key",
+            "credential", "auth",
+        ]
+
+        lines = []
+        for line in output.split("\n"):
+            line_lower = line.lower()
+
+            # Check if line contains secret patterns
+            if any(pattern in line_lower for pattern in secret_patterns):
+                lines.append("<REDACTED: potential secret>")
+            # Redact absolute paths
+            elif line.startswith("/") or line.startswith("~"):
+                lines.append("<PATH>")
+            # Truncate long lines
+            elif len(line) > 100:
+                lines.append(line[:100] + "...")
+            else:
+                lines.append(line)
+
+        return "\n".join(lines)
+
     def _execute_gate(self, gate: QualityGate, cwd: Path) -> GateExecutionResult:
         """Execute a single quality gate."""
         start = time.time()
@@ -130,10 +275,14 @@ class QualityGateRunner:
             timeout_ms=gate.timeout
         )
 
+        # Validate command for security before execution
+        self._validate_command(gate.command)
+
         try:
+            # Use list form (no shell=True) for security
             result = subprocess.run(
-                gate.command,
-                shell=True,
+                gate.command.split(),  # Split command into list
+                shell=False,  # Explicitly disable shell
                 capture_output=True,
                 text=True,
                 cwd=cwd,
@@ -161,7 +310,7 @@ class QualityGateRunner:
                     gate_name=gate.name,
                     duration_ms=duration,
                     status="FAILED",
-                    error_preview=(result.stderr or result.stdout)[:100]
+                    error_preview=self._sanitize_output(result.stderr or result.stdout)
                 )
                 return GateExecutionResult(
                     gate_name=gate.name,
