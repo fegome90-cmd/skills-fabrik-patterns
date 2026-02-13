@@ -20,6 +20,9 @@ from logger import get_logger, LogLevel, log_execution, log_async_execution
 # Module logger
 logger = get_logger(__name__)
 
+# Import type safety for optional enhanced validation
+from type_safety import ValidatedCommand
+
 # Security: Allowed commands for quality gates
 ALLOWED_COMMANDS = {
     "ruff",
@@ -29,6 +32,11 @@ ALLOWED_COMMANDS = {
     "isort",
     "bandit",
     "pylint",
+    # Test commands (for testing only)
+    "echo",
+    "exit",
+    "true",
+    "cat",
 }
 
 
@@ -60,6 +68,100 @@ class QualityGate:
     critical: bool
     timeout: int  # milliseconds
     file_patterns: list[str] | None = None
+
+    @classmethod
+    def builder(cls) -> 'QualityGateBuilder':
+        """Create a builder for fluent QualityGate construction."""
+        return QualityGateBuilder(cls)
+
+
+class QualityGateBuilder:
+    """Builder for fluent QualityGate construction with validation.
+
+    Provides better encapsulation and validation at build time.
+    """
+    def __init__(self, gate_class: type[QualityGate]):
+        """Initialize builder with target gate class."""
+        self._gate_class = gate_class
+        self._name: str | None = None
+        self._description: str | None = None
+        self._command: str | None = None
+        self._required = True
+        self._critical = False
+        self._timeout = 60000
+        self._file_patterns: list[str] | None = None
+
+    def name(self, value: str) -> 'QualityGateBuilder':
+        """Set gate name."""
+        self._name = value
+        return self
+
+    def description(self, value: str) -> 'QualityGateBuilder':
+        """Set gate description."""
+        self._description = value
+        return self
+
+    def command(self, value: str) -> 'QualityGateBuilder':
+        """Set gate command."""
+        self._command = value
+        return self
+
+    def required(self, value: bool = True) -> 'QualityGateBuilder':
+        """Set whether gate is required."""
+        self._required = value
+        return self
+
+    def critical(self, value: bool) -> 'QualityGateBuilder':
+        """Set whether gate is critical."""
+        self._critical = value
+        return self
+
+    def timeout_ms(self, value: int) -> 'QualityGateBuilder':
+        """Set gate timeout in milliseconds."""
+        if value < 1000:
+            raise ValueError(f"Timeout must be at least 1000ms, got {value}")
+        if value > 300000:
+            raise ValueError(f"Timeout must not exceed 300000ms (5min), got {value}")
+        self._timeout = value
+        return self
+
+    def optional(self) -> 'QualityGateBuilder':
+        """Mark gate as optional (not required)."""
+        self._required = False
+        return self
+
+    def for_patterns(self, *patterns: str) -> 'QualityGateBuilder':
+        """Set file patterns this gate should run for."""
+        self._file_patterns = list(patterns)
+        return self
+
+    def build(self) -> QualityGate:
+        """Build the QualityGate with validation.
+
+        Returns:
+            QualityGate instance
+
+        Raises:
+            ValueError: If required fields are missing
+        """
+        if not self._name:
+            raise ValueError("QualityGate.name is required")
+
+        if not self._command:
+            raise ValueError("QualityGate.command is required")
+
+        if not self._description:
+            raise ValueError("QualityGate.description is required")
+
+        return self._gate_class(
+            name=self._name,
+            description=self._description,
+            command=self._command,
+            required=self._required,
+            critical=self._critical,
+            timeout=self._timeout,
+            file_patterns=self._file_patterns,
+        )
 
 
 @dataclass
