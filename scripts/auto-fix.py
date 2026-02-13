@@ -16,7 +16,14 @@ Output: Formatted file (in-place) + stderr status message
 import json
 import sys
 import subprocess
+import time
 from pathlib import Path
+
+# Add lib directory to path for KPILogger
+lib_dir = Path(__file__).parent.parent / "lib"
+sys.path.insert(0, str(lib_dir))
+
+from kpi_logger import KPILogger
 
 # Formatters por extensión
 # Nota: Felipe usa ruff según rules/python/coding-style.md
@@ -114,6 +121,10 @@ def format_file(file_path: Path) -> bool:
 
 def main() -> int:
     """Process tool result and format if needed."""
+    # Initialize KPI logger
+    kpi_logger = KPILogger()
+    session_id = time.strftime('%Y%m%d-%H%M%S')
+
     try:
         # Read from stdin (handles both file-like and string input)
         stdin_content = sys.stdin.read() if hasattr(sys.stdin, 'read') else str(sys.stdin)
@@ -138,8 +149,20 @@ def main() -> int:
         return 0
 
     # Aplicar formato
-    if format_file(path):
+    formatted = format_file(path)
+    if formatted:
         print(f"✅ Auto-formatted: {path.name}", file=sys.stderr)
+
+    # Log KPI event
+    ext = path.suffix
+    formatter = FORMATTERS.get(ext, 'unknown').split()[0]  # Get formatter name
+    kpi_logger.log_auto_fix(
+        session_id=session_id,
+        file_path=str(path),
+        file_type=ext,
+        success=formatted,
+        formatter=formatter
+    )
 
     return 0
 

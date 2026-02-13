@@ -24,6 +24,7 @@ sys.path.insert(0, str(lib_dir))
 from quality_gates import QualityGateRunner, QualityGatesOrchestrator
 from alerts import QualityAlerts
 from fallback import create_fallback_manager, FallbackAction
+from kpi_logger import KPILogger, KPIEvent
 
 
 async def run_quality_gates(project_path: Path, changed_files: list[str], tier: str = "deep") -> tuple[list[Any], list[Any]]:
@@ -118,6 +119,23 @@ def main() -> int:
     passed = sum(1 for r in results if r.status.value == "passed")
     failed = sum(1 for r in results if r.status.value == "failed")
     timed_out = sum(1 for r in results if r.status.value == "timeout")
+
+    # Calculate total duration for KPI
+    total_duration_ms = sum(r.duration_ms for r in results if hasattr(r, 'duration_ms'))
+
+    # Log KPI event
+    import time
+    session_id = time.strftime('%Y%m%d-%H%M%S')
+    kpi_logger = KPILogger()
+    gate_names = [r.gate_name for r in results if hasattr(r, 'gate_name')]
+    kpi_logger.log_quality_gates(
+        session_id=session_id,
+        passed=passed,
+        failed=failed,
+        timed_out=timed_out,
+        duration_ms=total_duration_ms,
+        gate_names=gate_names
+    )
 
     print(f"📊 Quality Gates: {passed} passed, {failed} failed, {timed_out} timeout")
 

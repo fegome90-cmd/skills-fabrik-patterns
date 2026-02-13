@@ -12,6 +12,7 @@ This runs before context is compacted, ensuring state preservation.
 
 import json
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ sys.path.insert(0, str(lib_dir))
 
 from handoff import HandoffProtocol
 from backup import StateBackup
+from kpi_logger import KPILogger
 
 
 def create_handoff_from_context() -> dict[str, Any]:
@@ -81,6 +83,7 @@ def create_handoff_from_context() -> dict[str, Any]:
 
 def main() -> int:
     """Create handoff and backup before session compact."""
+    start_time = time.time()
     plugin_root = Path(__file__).parent.parent
     claude_dir = Path.home() / ".claude"
 
@@ -114,6 +117,17 @@ def main() -> int:
     removed_handoffs = handoff_protocol.cleanup_old_handoffs(keep=30)
     if removed_handoffs > 0:
         print(f"🧹 Cleaned up {removed_handoffs} old handoff files")
+
+    # 5. Log KPI session_end event
+    duration_seconds = int(time.time() - start_time)
+    kpi_logger = KPILogger()
+    session_id = session_data.get('session_id', time.strftime('%Y%m%d-%H%M%S'))
+    kpi_logger.log_session_end(
+        session_id=session_id,
+        duration_seconds=duration_seconds,
+        total_files_modified=len(handoff.artifacts),
+        total_auto_fixes=0  # This hook doesn't track auto-fixes
+    )
 
     return 0
 

@@ -12,6 +12,7 @@ Output: JSON with additionalContext for Claude Code
 
 import json
 import sys
+import time
 from pathlib import Path
 
 # Add lib directory to path
@@ -20,10 +21,13 @@ sys.path.insert(0, str(lib_dir))
 
 from tag_system import TagInjector
 from evidence_cli import EvidenceCLI
+from kpi_logger import KPILogger, KPIEvent
 
 
 def main() -> int:
     """Inject context tags and validate evidence."""
+    start_time = time.time()
+
     # Read input from Claude Code
     try:
         input_data = json.load(sys.stdin)
@@ -38,6 +42,7 @@ def main() -> int:
     # 1. Inject TAGs from Elle's context
     injector = TagInjector()
     enhanced_prompt = injector.inject(user_prompt)
+    tags_injected = enhanced_prompt != user_prompt
 
     # 2. Run Evidence validation
     evidence_cli = EvidenceCLI(fail_fast=False)  # Don't block on warnings
@@ -50,7 +55,7 @@ def main() -> int:
     }
 
     # Add TAGs summary if any were found
-    if enhanced_prompt != user_prompt:
+    if tags_injected:
         tag_lines = enhanced_prompt.split('\n\n')[0]  # Get TAGs section
         output["additionalContext"].append({
             "name": "TAGs Context",
@@ -69,6 +74,24 @@ def main() -> int:
             "description": "Project state validation results",
             "content": summary
         })
+
+    # Log KPI event
+    duration_ms = int((time.time() - start_time) * 1000)
+    kpi_logger = KPILogger()
+    session_id = time.strftime('%Y%m%d-%H%M%S')
+    event = KPIEvent(
+        timestamp=time.strftime('%Y-%m-%dT%H:%M:%S'),
+        session_id=session_id,
+        event_type="context_injection",
+        data={
+            "duration_ms": duration_ms,
+            "tags_injected": tags_injected,
+            "validation_failures": len(failed),
+            "validation_warnings": len(warnings),
+            "project_path": str(project_path)
+        }
+    )
+    kpi_logger.log_event(event)
 
     # Print output for Claude Code
     print(json.dumps(output, indent=2))
