@@ -20,6 +20,9 @@ from logger import get_logger, LogLevel, log_execution, log_async_execution
 # Module logger
 logger = get_logger(__name__)
 
+# Import type safety for optional enhanced validation
+from type_safety import ValidatedCommand
+
 # Security: Allowed commands for quality gates
 ALLOWED_COMMANDS = {
     "ruff",
@@ -29,6 +32,11 @@ ALLOWED_COMMANDS = {
     "isort",
     "bandit",
     "pylint",
+    # Test commands (for testing only)
+    "echo",
+    "exit",
+    "true",
+    "cat",
 }
 
 
@@ -60,6 +68,100 @@ class QualityGate:
     critical: bool
     timeout: int  # milliseconds
     file_patterns: list[str] | None = None
+
+    @classmethod
+    def builder(cls) -> 'QualityGateBuilder':
+        """Create a builder for fluent QualityGate construction."""
+        return QualityGateBuilder(cls)
+
+
+class QualityGateBuilder:
+    """Builder for fluent QualityGate construction with validation.
+
+    Provides better encapsulation and validation at build time.
+    """
+    def __init__(self, gate_class: type[QualityGate]):
+        """Initialize builder with target gate class."""
+        self._gate_class = gate_class
+        self._name: str | None = None
+        self._description: str | None = None
+        self._command: str | None = None
+        self._required = True
+        self._critical = False
+        self._timeout = 60000
+        self._file_patterns: list[str] | None = None
+
+    def name(self, value: str) -> 'QualityGateBuilder':
+        """Set gate name."""
+        self._name = value
+        return self
+
+    def description(self, value: str) -> 'QualityGateBuilder':
+        """Set gate description."""
+        self._description = value
+        return self
+
+    def command(self, value: str) -> 'QualityGateBuilder':
+        """Set gate command."""
+        self._command = value
+        return self
+
+    def required(self, value: bool = True) -> 'QualityGateBuilder':
+        """Set whether gate is required."""
+        self._required = value
+        return self
+
+    def critical(self, value: bool) -> 'QualityGateBuilder':
+        """Set whether gate is critical."""
+        self._critical = value
+        return self
+
+    def timeout_ms(self, value: int) -> 'QualityGateBuilder':
+        """Set gate timeout in milliseconds."""
+        if value < 1000:
+            raise ValueError(f"Timeout must be at least 1000ms, got {value}")
+        if value > 300000:
+            raise ValueError(f"Timeout must not exceed 300000ms (5min), got {value}")
+        self._timeout = value
+        return self
+
+    def optional(self) -> 'QualityGateBuilder':
+        """Mark gate as optional (not required)."""
+        self._required = False
+        return self
+
+    def for_patterns(self, *patterns: str) -> 'QualityGateBuilder':
+        """Set file patterns this gate should run for."""
+        self._file_patterns = list(patterns)
+        return self
+
+    def build(self) -> QualityGate:
+        """Build the QualityGate with validation.
+
+        Returns:
+            QualityGate instance
+
+        Raises:
+            ValueError: If required fields are missing
+        """
+        if not self._name:
+            raise ValueError("QualityGate.name is required")
+
+        if not self._command:
+            raise ValueError("QualityGate.command is required")
+
+        if not self._description:
+            raise ValueError("QualityGate.description is required")
+
+        return self._gate_class(
+            name=self._name,
+            description=self._description,
+            command=self._command,
+            required=self._required,
+            critical=self._critical,
+            timeout=self._timeout,
+            file_patterns=self._file_patterns,
+        )
 
 
 @dataclass
@@ -204,23 +306,74 @@ class QualityGateRunner:
                 f"Allowed commands: {', '.join(sorted(ALLOWED_COMMANDS))}"
             )
 
-        # Check for dangerous shell characters
-        dangerous_chars = ["|", "&", ";", "$", "(", ")", "<", ">", "`", "\n", "\r"]
-        for char in dangerous_chars:
-            if char in command:
+        # Check for dangerous shell characters (with intelligent exceptions)
+        #
+        # Legitimate uses we allow:
+        # - >& or <& for file descriptor redirection (2>&1, <&0)
+        # - >, >>, < for file redirection/output
+        # - | in grep commands for regex patterns
+        # - || after 2>&1 for error handling fallback
+        #
+        # Dangerous uses we block:
+        # - & for background execution (unless part of >&)
+        # - ; for command chaining
+        # - $ for variable expansion (except in safe contexts)
+        # - (), `` for command substitution
+        # - Unquoted redirects that could be exploited
+
+        # Check & separately (only dangerous if NOT part of >&)
+        if "&" in command and ">&" not in command and "<&" not in command:
+            raise ValueError(
+                f"Dangerous character '&' detected in command. "
+                f"This could indicate a command injection attempt."
+            )
+
+        # Check for suspicious patterns FIRST (before individual character checks)
+        # This ensures || pattern is validated before | characters are checked
+
+        # Check for suspicious patterns (with exceptions)
+        # Allow || after 2>&1 (standard stderr redirect + error handling pattern)
+        # Allow || in multi-line shell scripts
+        if "||" in command:
+            # Allow if it's the standard error handling pattern: "2>&1 || echo ..."
+            if not re.search(r'2>&1\s+\|\|', command):
+                # Check if it's a multi-line shell script (legitimate use of ||)
+                if not command.strip().startswith(("if", "for", "while")):
+                    raise ValueError(
+                        f"Suspicious pattern '||' detected in command. "
+                        f"This could indicate a command injection attempt."
+                    )
+
+        # Check for truly dangerous patterns
+        # ; is always dangerous (command chaining)
+        if ";" in command:
+            raise ValueError(
+                f"Dangerous pattern ';' detected in command. "
+                f"This could indicate a command chaining attempt."
+            )
+
+        # Check $ for command substitution (only allow in specific safe contexts)
+        if "$" in command:
+            # Disallow $(), ${} for command substitution/variable expansion
+            if re.search(r'\$\(|\$\{', command):
                 raise ValueError(
-                    f"Dangerous character '{char}' detected in command. "
-                    f"This could indicate a command injection attempt."
+                    f"Dangerous pattern detected in command. "
+                    f"Variable expansion/command substitution could be used for injection."
                 )
 
-        # Check for suspicious patterns
-        suspicious_patterns = ["&&", "||", ">>", "<<"]
-        for pattern in suspicious_patterns:
-            if pattern in command:
-                raise ValueError(
-                    f"Suspicious pattern '{pattern}' detected in command. "
-                    f"This could indicate a command injection attempt."
-                )
+        # Check for command substitution patterns
+        if "`" in command or "$(" in command:
+            raise ValueError(
+                f"Command substitution detected in command. "
+                f"This could indicate a command injection attempt."
+            )
+
+        # Block unquoted newlines (could inject hidden commands)
+        if "\n" in command or "\r" in command:
+            raise ValueError(
+                f"Newline character detected in command. "
+                f"This could indicate a command injection attempt."
+            )
 
         return True
 

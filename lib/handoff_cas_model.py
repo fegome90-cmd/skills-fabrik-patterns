@@ -36,6 +36,9 @@ from jsonl_typed import (
 )
 from utils import estimate_tokens_for_size
 
+# Import type safety wrappers for enhanced type validation
+from type_safety import DepthValue, validate_depth
+
 
 class Depth(Enum):
     """

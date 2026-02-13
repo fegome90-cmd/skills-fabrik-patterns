@@ -1,0 +1,43 @@
+# Fallback Policies Configuration
+# Defines behavior when hooks fail or timeout
+#
+# Policy actions:
+#   log_only: Log error but continue (exit 0)
+#   continue: Continue without logging (exit 0)
+#   continue_with_warning: Log warning and continue (exit 0)
+#   continue_with_summary: Show summary and continue (exit 0)
+#   retry_once: Retry once before giving up
+#   critical: Block operation (exit 1)
+
+policies:
+  SessionStart:
+    description: Hook runs at session start
+    on_failure: log_only  # Never block session start
+    timeout_action: continue
+    user_message: "Session start hook failed, continuing anyway"
+
+  UserPromptSubmit:
+    description: Hook runs before user prompt submission
+    on_failure: log_only  # Don't inject tags, but continue
+    timeout_action: continue_with_warning
+    user_message: "Context injection failed, prompt will be sent anyway"
+
+  Stop:
+    description: Hook runs before session end
+    on_failure: log_and_warn  # Show alert but don't block
+    timeout_action: continue_with_summary
+    user_message: "Quality gates check incomplete, session will end anyway"
+
+  PreCompact:
+    description: Hook runs before context compaction
+    on_failure: critical  # CRITICAL: failure here can lose data
+    timeout_action: retry_once
+    user_message: "Backup creation failed - compaction blocked to prevent data loss"
+    max_retries: 1
+    retry_delay_ms: 1000
+
+  PostToolUse:
+    description: Hook runs after tool execution
+    on_failure: log_only  # Auto-fix is optional
+    timeout_action: continue
+    user_message: "Auto-fix hook failed, continuing without it"

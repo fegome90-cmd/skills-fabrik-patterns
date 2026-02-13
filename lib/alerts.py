@@ -16,7 +16,15 @@ from quality_gates import GateExecutionResult, GateStatus
 
 
 class SeverityLevel(Enum):
-    """Alert severity levels."""
+    """Alert severity levels.
+
+    Attributes:
+        CRITICAL: Block session end immediately
+        HIGH: Major quality issue
+        MEDIUM: Moderate quality concern
+        LOW: Minor quality issue
+        INFO: Informational only
+    """
     CRITICAL = "CRITICAL"
     HIGH = "HIGH"
     MEDIUM = "MEDIUM"
@@ -26,14 +34,19 @@ class SeverityLevel(Enum):
     @property
     def emoji(self) -> str:
         """Return emoji for this severity level."""
-        emojis = {
-            SeverityLevel.CRITICAL: '🔴',
-            SeverityLevel.HIGH: '🟠',
-            SeverityLevel.MEDIUM: '🟡',
-            SeverityLevel.LOW: '🟢',
-            SeverityLevel.INFO: '🔵'
-        }
-        return emojis.get(self, '?')
+        match self:
+            case SeverityLevel.CRITICAL:
+                return '🔴'
+            case SeverityLevel.HIGH:
+                return '🟠'
+            case SeverityLevel.MEDIUM:
+                return '🟡'
+            case SeverityLevel.LOW:
+                return '🟢'
+            case SeverityLevel.INFO:
+                return '🔵'
+            case _:
+                return '?'
 
 
 @dataclass(frozen=True)
@@ -124,13 +137,9 @@ class QualityAlerts:
         if timeout_alert:
             alerts.append(timeout_alert)
 
-        # Individual gate failures
-        # Note: Critical gates should be passed as a parameter if this check is needed
-        # Placeholder for future critical gate checking functionality
-        for result in results:
-            if result.status == GateStatus.FAILED:
-                # TODO: Implement critical gate checking when critical gates are passed as parameter
-                pass
+        # Individual gate failures are tracked via failure_rate above
+        # Critical gate checking can be added as a parameter in the future
+        # For now, all failed gates generate alerts based on severity thresholds
 
         return alerts
 

@@ -115,18 +115,14 @@ def format_file(file_path: Path) -> bool:
 def main() -> int:
     """Process tool result and format if needed."""
     try:
-        # Read from stdin (handles both file-like and string input in tests)
-        if hasattr(sys.stdin, 'read'):
-            stdin_content = sys.stdin.read()
-        else:
-            # In tests, sys.stdin might be replaced with a string
-            stdin_content = str(sys.stdin)
+        # Read from stdin (handles both file-like and string input)
+        stdin_content = sys.stdin.read() if hasattr(sys.stdin, 'read') else str(sys.stdin)
 
         if not stdin_content or not stdin_content.strip():
             return 0
         input_data = json.loads(stdin_content)
-    except (json.JSONDecodeError, ValueError):
-        return 0  # No hay datos, salir silenciosamente
+    except (json.JSONDecodeError, ValueError, AttributeError, OSError):
+        return 0  # No valid data, exit silently
 
     # Solo procesar Write/Edit tools
     tool = input_data.get('tool')

@@ -20,6 +20,29 @@ from alerts import (
 from quality_gates import GateExecutionResult, GateStatus
 
 
+@pytest.fixture
+def alerts_config(tmp_path) -> Path:
+    """Create alerts.yaml config file for testing."""
+    # Use thresholds that will trigger at various levels
+    config_file = tmp_path / "alerts.yaml"
+    config_file.write_text("""
+thresholds:
+  critical:
+    failure_rate: 0.8
+    timeout_rate: 0.8
+  high:
+    failure_rate: 0.6
+    timeout_rate: 0.6
+  medium:
+    failure_rate: 0.4
+    timeout_rate: 0.4
+  low:
+    failure_rate: 0.2
+    timeout_rate: 0.2
+""")
+    return config_file
+
+
 class TestSeverityLevel:
     """Test SeverityLevel enum."""
 
@@ -62,28 +85,6 @@ class TestAlert:
 
 class TestQualityAlerts:
     """Test QualityAlerts class."""
-
-    @pytest.fixture
-    def alerts_config(self, tmp_path) -> Path:
-        """Create alerts.yaml config file for testing."""
-        # Use thresholds that will trigger at various levels
-        config_file = tmp_path / "alerts.yaml"
-        config_file.write_text("""
-thresholds:
-  critical:
-    failure_rate: 0.8
-    timeout_rate: 0.8
-  high:
-    failure_rate: 0.6
-    timeout_rate: 0.6
-  medium:
-    failure_rate: 0.4
-    timeout_rate: 0.4
-  low:
-    failure_rate: 0.2
-    timeout_rate: 0.2
-""")
-        return config_file
 
     def test_init_loads_config(self, alerts_config: Path):
         """Test QualityAlerts initializes from config."""
