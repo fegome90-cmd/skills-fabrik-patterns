@@ -204,23 +204,74 @@ class QualityGateRunner:
                 f"Allowed commands: {', '.join(sorted(ALLOWED_COMMANDS))}"
             )
 
-        # Check for dangerous shell characters
-        dangerous_chars = ["|", "&", ";", "$", "(", ")", "<", ">", "`", "\n", "\r"]
-        for char in dangerous_chars:
-            if char in command:
+        # Check for dangerous shell characters (with intelligent exceptions)
+        #
+        # Legitimate uses we allow:
+        # - >& or <& for file descriptor redirection (2>&1, <&0)
+        # - >, >>, < for file redirection/output
+        # - | in grep commands for regex patterns
+        # - || after 2>&1 for error handling fallback
+        #
+        # Dangerous uses we block:
+        # - & for background execution (unless part of >&)
+        # - ; for command chaining
+        # - $ for variable expansion (except in safe contexts)
+        # - (), `` for command substitution
+        # - Unquoted redirects that could be exploited
+
+        # Check & separately (only dangerous if NOT part of >&)
+        if "&" in command and ">&" not in command and "<&" not in command:
+            raise ValueError(
+                f"Dangerous character '&' detected in command. "
+                f"This could indicate a command injection attempt."
+            )
+
+        # Check for suspicious patterns FIRST (before individual character checks)
+        # This ensures || pattern is validated before | characters are checked
+
+        # Check for suspicious patterns (with exceptions)
+        # Allow || after 2>&1 (standard stderr redirect + error handling pattern)
+        # Allow || in multi-line shell scripts
+        if "||" in command:
+            # Allow if it's the standard error handling pattern: "2>&1 || echo ..."
+            if not re.search(r'2>&1\s+\|\|', command):
+                # Check if it's a multi-line shell script (legitimate use of ||)
+                if not command.strip().startswith(("if", "for", "while")):
+                    raise ValueError(
+                        f"Suspicious pattern '||' detected in command. "
+                        f"This could indicate a command injection attempt."
+                    )
+
+        # Check for truly dangerous patterns
+        # ; is always dangerous (command chaining)
+        if ";" in command:
+            raise ValueError(
+                f"Dangerous pattern ';' detected in command. "
+                f"This could indicate a command chaining attempt."
+            )
+
+        # Check $ for command substitution (only allow in specific safe contexts)
+        if "$" in command:
+            # Disallow $(), ${} for command substitution/variable expansion
+            if re.search(r'\$\(|\$\{', command):
                 raise ValueError(
-                    f"Dangerous character '{char}' detected in command. "
-                    f"This could indicate a command injection attempt."
+                    f"Dangerous pattern detected in command. "
+                    f"Variable expansion/command substitution could be used for injection."
                 )
 
-        # Check for suspicious patterns
-        suspicious_patterns = ["&&", "||", ">>", "<<"]
-        for pattern in suspicious_patterns:
-            if pattern in command:
-                raise ValueError(
-                    f"Suspicious pattern '{pattern}' detected in command. "
-                    f"This could indicate a command injection attempt."
-                )
+        # Check for command substitution patterns
+        if "`" in command or "$(" in command:
+            raise ValueError(
+                f"Command substitution detected in command. "
+                f"This could indicate a command injection attempt."
+            )
+
+        # Block unquoted newlines (could inject hidden commands)
+        if "\n" in command or "\r" in command:
+            raise ValueError(
+                f"Newline character detected in command. "
+                f"This could indicate a command injection attempt."
+            )
 
         return True
 

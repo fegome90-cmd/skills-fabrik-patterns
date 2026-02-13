@@ -1,8 +1,90 @@
 # Quality Gates Configuration
-# Defines quality checks that run before session end
+# Defines quality checks organized by execution tier
+#
+# Tiers:
+#   fast:  Quick checks for hooks (Stop, PostToolUse) - should complete in <15s
+#   deep:  Comprehensive checks for CI/manual runs - full validation
 
+tiers:
+  fast:
+    description: Fast quality checks for hooks (<15s total)
+    gates:
+      # Quick Python lint only - ruff is very fast
+      - name: quick-lint
+        description: Fast Python lint check
+        command: ruff check --select F --select E --select W --select I --output-format concise .
+        required: false
+        critical: false
+        timeout: 10000
+        file_patterns: ["*.py"]
+
+  deep:
+    description: Comprehensive quality checks for CI/manual runs
+    gates:
+      # TypeScript compilation check
+      - name: typescript-check
+        description: TypeScript compilation check
+        command: npx tsc --noEmit 2>&1 || echo "TypeScript check skipped (no tsconfig)"
+        required: false
+        critical: false
+        timeout: 60000
+        file_patterns: ["*.ts", "*.tsx"]
+
+      # Python type check
+      - name: python-type-check
+        description: Python type check with mypy
+        command: mypy . --no-error-summary 2>&1 || echo "mypy check skipped (not configured)"
+        required: false
+        critical: false
+        timeout: 30000
+        file_patterns: ["*.py"]
+
+      # Format check
+      - name: format-check
+        description: Code formatting check
+        command: |
+          if command -v npx >/dev/null 2>&1; then
+            npx prettier --check "**/*.{ts,tsx,js,jsx,py,md}" 2>&1 || echo "Some files need formatting"
+          else
+            echo "Prettier check skipped (not installed)"
+          fi
+        required: false
+        critical: false
+        timeout: 20000
+        file_patterns: ["*.ts", "*.tsx", "*.js", "*.jsx", "*.py", "*.md"]
+
+      # Security check
+      - name: security-check
+        description: Check for hardcoded secrets (excludes venv/node_modules)
+        command: |
+          if grep -r "API_KEY\|SECRET\|PASSWORD\|TOKEN" \
+               --include="*.py" --include="*.ts" --include="*.tsx" \
+               --include="*.js" --include="*.jsx" \
+               --exclude-dir=".venv" \
+               --exclude-dir="venv" \
+               --exclude-dir="node_modules" \
+               --exclude-dir=".pytest_cache" \
+               --exclude-dir="site-packages" \
+               --exclude-dir=".mypy_cache" \
+               --exclude-dir="__pycache__" \
+               --exclude-dir=".tox" \
+               --exclude-dir="dist" \
+               --exclude-dir="build" \
+               . 2>/dev/null; then
+              echo "Found potential hardcoded secrets"
+              exit 1
+          else
+              echo "No secrets found"
+              exit 0
+          fi
+        required: false
+        critical: false
+        timeout: 10000
+        file_patterns: ["*.py", "*.ts", "*.tsx", "*.js", "*.jsx", "*.md"]
+
+# Legacy flat format for backward compatibility (maps to deep tier)
+# If using old code that reads 'gates' directly, this provides deep tier
 gates:
-  # TypeScript compilation check
   - name: typescript-check
     description: TypeScript compilation check
     command: npx tsc --noEmit 2>&1 || echo "TypeScript check skipped (no tsconfig)"
@@ -11,7 +93,6 @@ gates:
     timeout: 60000
     file_patterns: ["*.ts", "*.tsx"]
 
-  # Python type check
   - name: python-type-check
     description: Python type check with mypy
     command: mypy . --no-error-summary 2>&1 || echo "mypy check skipped (not configured)"
@@ -20,7 +101,6 @@ gates:
     timeout: 30000
     file_patterns: ["*.py"]
 
-  # Format check
   - name: format-check
     description: Code formatting check
     command: |
@@ -34,24 +114,23 @@ gates:
     timeout: 20000
     file_patterns: ["*.ts", "*.tsx", "*.js", "*.jsx", "*.py", "*.md"]
 
-  # Security check
   - name: security-check
     description: Check for hardcoded secrets (excludes venv/node_modules)
     command: |
       if grep -r "API_KEY\|SECRET\|PASSWORD\|TOKEN" \
-         --include="*.py" --include="*.ts" --include="*.tsx" \
-         --include="*.js" --include="*.jsx" \
-         --exclude-dir=".venv" \
-         --exclude-dir="venv" \
-         --exclude-dir="node_modules" \
-         --exclude-dir=".pytest_cache" \
-         --exclude-dir="site-packages" \
-         --exclude-dir=".mypy_cache" \
-         --exclude-dir="__pycache__" \
-         --exclude-dir=".tox" \
-         --exclude-dir="dist" \
-         --exclude-dir="build" \
-         . 2>/dev/null; then
+           --include="*.py" --include="*.ts" --include="*.tsx" \
+           --include="*.js" --include="*.jsx" \
+           --exclude-dir=".venv" \
+           --exclude-dir="venv" \
+           --exclude-dir="node_modules" \
+           --exclude-dir=".pytest_cache" \
+           --exclude-dir="site-packages" \
+           --exclude-dir=".mypy_cache" \
+           --exclude-dir="__pycache__" \
+           --exclude-dir=".tox" \
+           --exclude-dir="dist" \
+           --exclude-dir="build" \
+           . 2>/dev/null; then
         echo "Found potential hardcoded secrets"
         exit 1
       else

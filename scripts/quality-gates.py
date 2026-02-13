@@ -23,14 +23,15 @@ sys.path.insert(0, str(lib_dir))
 
 from quality_gates import QualityGateRunner, QualityGatesOrchestrator
 from alerts import QualityAlerts
+from fallback import create_fallback_manager, FallbackAction
 
 
-async def run_quality_gates(project_path: Path, changed_files: list[str]) -> tuple[list[Any], list[Any]]:
+async def run_quality_gates(project_path: Path, changed_files: list[str], tier: str = "deep") -> tuple[list[Any], list[Any]]:
     """Run quality gates and return results with alerts."""
     plugin_root = Path(__file__).parent.parent
 
-    # Initialize gate runner
-    runner = QualityGateRunner(plugin_root / "config" / "gates.yaml")
+    # Initialize gate runner with specified tier
+    runner = QualityGateRunner(plugin_root / "config" / "gates.yaml", tier=tier)
 
     # Initialize orchestrator
     orchestrator = QualityGatesOrchestrator(
@@ -59,6 +60,22 @@ async def run_quality_gates(project_path: Path, changed_files: list[str]) -> tup
 
 def main() -> int:
     """Run quality gates and determine exit code."""
+    import argparse
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Run quality gates")
+    parser.add_argument(
+        "--tier",
+        choices=["fast", "deep"],
+        default="deep",
+        help="Quality gates tier: fast (<15s) for hooks, deep (full validation) for CI"
+    )
+    args = parser.parse_args()
+
+    # Initialize fallback policy manager
+    plugin_root = Path(__file__).parent.parent
+    fallback_manager = create_fallback_manager(plugin_root)
+
     # Get project path from current directory
     project_path = Path.cwd()
 
@@ -78,8 +95,24 @@ def main() -> int:
         import logging
         logging.error(f"Failed to discover changed files in {project_path}: {e}")
 
-    # Run gates asynchronously
-    results, alerts = asyncio.run(run_quality_gates(project_path, changed_files))
+    # Run gates asynchronously with specified tier
+    try:
+        results, alerts = asyncio.run(run_quality_gates(project_path, changed_files, tier=args.tier))
+    except Exception as e:
+        import logging
+        # Handle failure with fallback policy
+        action, user_message = fallback_manager.handle_failure("Stop", e, is_timeout=False)
+
+        if action in (FallbackAction.LOG_AND_WARN, FallbackAction.CONTINUE_WITH_WARNING):
+            print(f"⚠️  {user_message}", file=sys.stderr)
+            print(f"   Error: {str(e)[:100]}", file=sys.stderr)
+            return 0  # Don't block session end
+        elif action == FallbackAction.CRITICAL:
+            print(f"⛔ CRITICAL: {user_message}", file=sys.stderr)
+            print(f"   Error: {str(e)[:100]}", file=sys.stderr)
+            return 1  # Block session end
+        else:  # log_only, continue, continue_with_summary
+            return 0
 
     # Print results summary
     passed = sum(1 for r in results if r.status.value == "passed")
@@ -101,7 +134,7 @@ def main() -> int:
         if result.error:
             print(f"     {result.error[:100]}")
 
-    # Agregar hints de resolución para gates fallidos
+    # Add resolution hints for failed gates
     if failed > 0:
         print("\n💡 Suggested fixes:")
         for result in results:

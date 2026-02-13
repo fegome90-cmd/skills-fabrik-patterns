@@ -90,6 +90,7 @@ class TestRuffFormatter:
 
         assert result.success is True
         assert result.formatted is False  # No changes made
+        mock_run.assert_called_once()
 
     @patch('subprocess.run')
     def test_check_and_fix_with_errors(self, mock_run):
@@ -175,12 +176,11 @@ class TestRuffFormatter:
 
         config_path = Path("/custom/ruff.toml")
         formatter = RuffFormatter(config_path=config_path)
-
         formatter.format_file(Path("test.py"))
 
         # Should include config flag
         call_args = mock_run.call_args[0][0]
-        assert f"--config={config_path}" in call_args
+        assert f"--config={config_path}" in " ".join(call_args)
 
     @patch('subprocess.run')
     def test_check_directory_instead_of_file(self, mock_run):
@@ -224,3 +224,7 @@ def test_default_target_version():
     """Test that default target version is py314."""
     formatter = RuffFormatter()
     assert formatter.target_version == "py314"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

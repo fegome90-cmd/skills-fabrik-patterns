@@ -28,8 +28,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/quality-gates.py",
-            "timeout": 120,
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/quality-gates.py --tier fast",
+            "timeout": 15,
             "async": true
           }
         ]

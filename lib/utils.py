@@ -10,6 +10,22 @@ from typing import Callable, TypeVar
 T = TypeVar('T')
 
 
+def estimate_tokens_for_size(size_bytes: int) -> int:
+    """
+    Estimate tokens from file size.
+
+    Uses a simple heuristic: ~30 tokens overhead + ~1 token per 34 bytes.
+    This assumes average source code density.
+
+    Args:
+        size_bytes: File size in bytes
+
+    Returns:
+        Estimated token count (minimum 30)
+    """
+    return max(30, size_bytes // 34)
+
+
 def measure_duration_ms(func: Callable[[], T]) -> tuple[T, int]:
     """
     Measure function duration in milliseconds.
