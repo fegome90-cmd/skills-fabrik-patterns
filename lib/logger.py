@@ -280,6 +280,7 @@ def log_execution(
     def decorator(func: F) -> F:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            """Execute wrapped function with logging."""
             # Get logger for module
             nonlocal logger
             if logger is None:
