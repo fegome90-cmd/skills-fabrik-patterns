@@ -164,14 +164,12 @@ gates:
 
     def test_execute_gate_timeout(self, tmp_path):
         """Test gate execution timeout."""
-        import time
-
         runner = QualityGateRunner.__new__(QualityGateRunner)
 
         gate = QualityGate(
             name="timeout-gate",
             description="Timeout test",
-            command=f"python -c \"import time; time.sleep(10)\"",  # Sleep longer than timeout
+            command="sleep 10",  # Sleep longer than timeout (sleep is allowed)
             required=True,
             critical=False,
             timeout=100  # 100ms timeout
@@ -182,13 +180,13 @@ gates:
         assert "Timeout" in result.error
 
     def test_execute_gate_invalid_command(self, tmp_path):
-        """Test gate with invalid command."""
+        """Test gate with command that fails (exit with non-zero)."""
         runner = QualityGateRunner.__new__(QualityGateRunner)
 
         gate = QualityGate(
-            name="invalid-gate",
-            description="Invalid command",
-            command="nonexistent-command-xyz-123",
+            name="failing-gate",
+            description="Command that fails",
+            command="exit 1",  # Use exit 1 which is allowed and fails
             required=True,
             critical=False,
             timeout=5000

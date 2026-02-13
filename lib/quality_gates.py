@@ -37,6 +37,7 @@ ALLOWED_COMMANDS = {
     "exit",
     "true",
     "cat",
+    "sleep",  # For timeout testing
 }
 
 
