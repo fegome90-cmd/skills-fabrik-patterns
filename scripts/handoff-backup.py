@@ -24,6 +24,7 @@ sys.path.insert(0, str(lib_dir))
 from handoff import HandoffProtocol
 from backup import StateBackup
 from kpi_logger import KPILogger
+from fallback import create_fallback_manager, FallbackAction
 
 
 def create_handoff_from_context() -> dict[str, Any]:
@@ -47,23 +48,25 @@ def create_handoff_from_context() -> dict[str, Any]:
     # Try to extract information from context files
     claude_md = context_dir / "CLAUDE.md"
     if claude_md.exists():
-        content = claude_md.read_text()
+        try:
+            content = claude_md.read_text()
 
-        # Look for project info
-        if "Projects" in content:
-            session_data['context'] = {'projects_mentioned': True}
+            # Look for project info
+            if "Projects" in content:
+                session_data['context'] = {'projects_mentioned': True}
 
-        # Look for recent work
-        if "## Recent Work" in content or "## Current Work" in content:
-            notes += "\nRecent work section found in CLAUDE.md"
-            session_data['notes'] = notes
+            # Look for recent work
+            if "## Recent Work" in content or "## Current Work" in content:
+                notes += "\nRecent work section found in CLAUDE.md"
+                session_data['notes'] = notes
+        except (OSError, PermissionError):
+            pass  # Continue without context extraction
 
     # Get any files in current directory as artifacts
     cwd = Path.cwd()
     if cwd != Path.home():
         # List recent files as potential artifacts
         try:
-            import time
             cutoff = time.time() - 3600  # Last hour
             recent_files = []
             for f in cwd.rglob("*"):
@@ -74,9 +77,8 @@ def create_handoff_from_context() -> dict[str, Any]:
 
             if recent_files:
                 session_data['artifacts'] = recent_files[:20]  # Limit to 20
-        except (OSError, PermissionError) as e:
-            import logging
-            logging.warning(f"Failed to discover recent files in {cwd}: {e}")
+        except (OSError, PermissionError):
+            pass  # Continue without artifact discovery
 
     return session_data
 
@@ -86,48 +88,85 @@ def main() -> int:
     start_time = time.time()
     plugin_root = Path(__file__).parent.parent
     claude_dir = Path.home() / ".claude"
+    fallback_manager = create_fallback_manager(plugin_root)
 
     print("📦 Pre-compact: Creating handoff and backup...")
 
-    # 1. Create handoff
-    handoff_protocol = HandoffProtocol(claude_dir)
+    handoff = None
+    handoff_path = None
+    backup_metadata = None
     session_data = create_handoff_from_context()
-    handoff = handoff_protocol.create_from_session(session_data)
-    handoff_path = handoff_protocol.save_handoff(handoff)
 
-    print(f"✅ Handoff saved: {handoff_path.name}")
-    print(f"   - {len(handoff.completed_tasks)} completed tasks")
-    print(f"   - {len(handoff.next_steps)} next steps")
-    print(f"   - {len(handoff.artifacts)} artifacts")
+    # 1. Create handoff
+    try:
+        handoff_protocol = HandoffProtocol(claude_dir)
+        handoff = handoff_protocol.create_from_session(session_data)
+        handoff_path = handoff_protocol.save_handoff(handoff)
+
+        print(f"✅ Handoff saved: {handoff_path.name}")
+        print(f"   - {len(handoff.completed_tasks)} completed tasks")
+        print(f"   - {len(handoff.next_steps)} next steps")
+        print(f"   - {len(handoff.artifacts)} artifacts")
+    except Exception as e:
+        action, message = fallback_manager.handle_failure('PreCompact', e)
+        print(f"⚠️ Handoff creation failed: {message}", file=sys.stderr)
+        # PreCompact is CRITICAL - check if we should exit with error
+        if fallback_manager.should_exit_with_error(action):
+            print("❌ Blocking compaction to prevent data loss", file=sys.stderr)
+            return 1
 
     # 2. Create backup
-    backup_system = StateBackup()
-    backup_metadata = backup_system.create_default_backup(reason="pre-compact")
+    try:
+        backup_system = StateBackup()
+        backup_metadata = backup_system.create_default_backup(reason="pre-compact")
 
-    print(f"✅ Backup created: {backup_metadata.backup_id}")
-    print(f"   - {len(backup_metadata.files_backed_up)} files backed up")
-    print(f"   - Restore: {backup_metadata.restore_command}")
+        print(f"✅ Backup created: {backup_metadata.backup_id}")
+        print(f"   - {len(backup_metadata.files_backed_up)} files backed up")
+        print(f"   - Restore: {backup_metadata.restore_command}")
+    except Exception as e:
+        action, message = fallback_manager.handle_failure('PreCompact', e)
+        print(f"⚠️ Backup creation failed: {message}", file=sys.stderr)
+        # PreCompact is CRITICAL - check if we should exit with error
+        if fallback_manager.should_exit_with_error(action):
+            print("❌ Blocking compaction to prevent data loss", file=sys.stderr)
+            return 1
 
     # 3. Cleanup old backups
-    removed_backups = backup_system.cleanup_old_backups(keep=10)
-    if removed_backups > 0:
-        print(f"🧹 Cleaned up {removed_backups} old backups")
+    try:
+        backup_system = StateBackup()
+        removed_backups = backup_system.cleanup_old_backups(keep=10)
+        if removed_backups > 0:
+            print(f"🧹 Cleaned up {removed_backups} old backups")
+    except Exception as e:
+        # Cleanup failures should not block
+        action, message = fallback_manager.handle_failure('PreCompact', e)
 
     # 4. Cleanup old handoffs
-    removed_handoffs = handoff_protocol.cleanup_old_handoffs(keep=30)
-    if removed_handoffs > 0:
-        print(f"🧹 Cleaned up {removed_handoffs} old handoff files")
+    try:
+        if handoff_path:
+            handoff_protocol = HandoffProtocol(claude_dir)
+            removed_handoffs = handoff_protocol.cleanup_old_handoffs(keep=30)
+            if removed_handoffs > 0:
+                print(f"🧹 Cleaned up {removed_handoffs} old handoff files")
+    except Exception as e:
+        # Cleanup failures should not block
+        action, message = fallback_manager.handle_failure('PreCompact', e)
 
     # 5. Log KPI session_end event
-    duration_seconds = int(time.time() - start_time)
-    kpi_logger = KPILogger()
-    session_id = session_data.get('session_id', time.strftime('%Y%m%d-%H%M%S'))
-    kpi_logger.log_session_end(
-        session_id=session_id,
-        duration_seconds=duration_seconds,
-        total_files_modified=len(handoff.artifacts),
-        total_auto_fixes=0  # This hook doesn't track auto-fixes
-    )
+    try:
+        duration_seconds = int(time.time() - start_time)
+        kpi_logger = KPILogger()
+        session_id = session_data.get('session_id', time.strftime('%Y%m%d-%H%M%S'))
+        artifacts_count = len(handoff.artifacts) if handoff else 0
+        kpi_logger.log_session_end(
+            session_id=session_id,
+            duration_seconds=duration_seconds,
+            total_files_modified=artifacts_count,
+            total_auto_fixes=0  # This hook doesn't track auto-fixes
+        )
+    except Exception as e:
+        # KPI logging failures should not block
+        action, message = fallback_manager.handle_failure('PreCompact', e)
 
     return 0
 

@@ -17,14 +17,25 @@ sys.path.insert(0, str(lib_dir))
 
 from health import HealthChecker, HealthStatus
 from kpi_logger import KPILogger, KPIEvent
+from fallback import create_fallback_manager, FallbackAction
 
 
 def main() -> int:
     """Run health checks and output results."""
+    plugin_root = Path(__file__).parent.parent
+    fallback_manager = create_fallback_manager(plugin_root)
     start_time = time.time()
-    checker = HealthChecker()
-    results = checker.run_all()
-    overall = checker.get_overall_status(results)
+
+    try:
+        checker = HealthChecker()
+        results = checker.run_all()
+        overall = checker.get_overall_status(results)
+    except Exception as e:
+        action, message = fallback_manager.handle_failure('SessionStart', e)
+        # SessionStart failures should not block - always return 0
+        print(json.dumps({"status": "degraded", "error": message}), file=sys.stderr)
+        return 0
+
     duration_ms = int((time.time() - start_time) * 1000)
 
     # Format output for Claude Code
@@ -42,22 +53,26 @@ def main() -> int:
     }
 
     # Log KPI event
-    kpi_logger = KPILogger()
-    session_id = time.strftime('%Y%m%d-%H%M%S')
-    event = KPIEvent(
-        timestamp=time.strftime('%Y-%m-%dT%H:%M:%S'),
-        session_id=session_id,
-        event_type="health_check",
-        data={
-            "overall_status": overall.value,
-            "duration_ms": duration_ms,
-            "checks_passed": sum(1 for r in results if r.status.value == "healthy"),
-            "checks_failed": sum(1 for r in results if r.status.value == "unhealthy"),
-            "checks_degraded": sum(1 for r in results if r.status.value == "degraded"),
-            "check_names": [r.name for r in results]
-        }
-    )
-    kpi_logger.log_event(event)
+    try:
+        kpi_logger = KPILogger()
+        session_id = time.strftime('%Y%m%d-%H%M%S')
+        event = KPIEvent(
+            timestamp=time.strftime('%Y-%m-%dT%H:%M:%S'),
+            session_id=session_id,
+            event_type="health_check",
+            data={
+                "overall_status": overall.value,
+                "duration_ms": duration_ms,
+                "checks_passed": sum(1 for r in results if r.status.value == "healthy"),
+                "checks_failed": sum(1 for r in results if r.status.value == "unhealthy"),
+                "checks_degraded": sum(1 for r in results if r.status.value == "degraded"),
+                "check_names": [r.name for r in results]
+            }
+        )
+        kpi_logger.log_event(event)
+    except Exception as e:
+        # KPI logging failures should not block health check
+        action, message = fallback_manager.handle_failure('SessionStart', e)
 
     # Print to stdout for Claude Code to consume
     print(json.dumps(output, indent=2))

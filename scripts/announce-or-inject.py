@@ -12,6 +12,7 @@ Environment:
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 # Add lib to path
@@ -19,6 +20,8 @@ lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
 from pack import load_pack_from_file, create_all_packs, PackSet, format_pack_for_injection
+from kpi_logger import KPILogger, KPIEvent
+from fallback import create_fallback_manager
 
 
 def get_handoff_dir() -> Path:
@@ -55,7 +58,7 @@ def get_packs_dir(handoff_id: str) -> Path:
     return packs_dir
 
 
-def load_best_pack(handoff_id: str, max_tokens: int = 1000) -> str | None:
+def load_best_pack(handoff_id: str, max_tokens: int = 1000) -> tuple[str | None, str]:
     """
     Load best pack for token budget.
 
@@ -69,12 +72,12 @@ def load_best_pack(handoff_id: str, max_tokens: int = 1000) -> str | None:
         max_tokens: Maximum tokens allowed
 
     Returns:
-        Formatted injection message, or None if no pack fits
+        Tuple of (formatted injection message or None, pack_type used)
     """
     packs_dir = get_packs_dir(handoff_id)
 
     if not packs_dir.exists():
-        return None
+        return None, "none"
 
     # Load pack_m
     pack_m_path = packs_dir / "pack_m.json"
@@ -103,21 +106,25 @@ def load_best_pack(handoff_id: str, max_tokens: int = 1000) -> str | None:
             packs_loaded["f"] = pack
 
     if not packs_loaded:
-        return None
+        return None, "none"
 
     # Get best pack
+    pack_type = "none"
     pack = packs_loaded.get("m")  # Default to medium
+    pack_type = "m"
     if pack is None or pack.tokens_estimated > max_tokens:
         pack = packs_loaded.get("s")  # Downgrade to shallow
+        pack_type = "s"
 
     if pack is None:
         pack = packs_loaded.get("f")  # Last resort
+        pack_type = "f"
 
     if pack is None or pack.tokens_estimated > max_tokens:
         # No pack fits within budget
-        return None
+        return None, "none"
 
-    return format_pack_for_injection(pack)
+    return format_pack_for_injection(pack), pack_type
 
 
 def main() -> int:
@@ -126,29 +133,69 @@ def main() -> int:
 
     Outputs injectable pack content or summary message.
     """
+    start_time = time.time()
+    plugin_root = Path(__file__).parent.parent
+    fallback_manager = create_fallback_manager(plugin_root)
+
     # Get max tokens from env
     max_tokens = int(os.environ.get("HANDOFF_MAX_TOKENS", "1000"))
 
-    # Get latest handoff
-    handoff_id = get_latest_handoff_id()
+    handoff_id = None
+    injection = None
+    pack_type = "none"
+    success = False
 
-    if not handoff_id:
-        # No handoff available
-        print("📭 No hay contexto previo disponible.")
-        return 0
+    try:
+        # Get latest handoff
+        handoff_id = get_latest_handoff_id()
 
-    # Load best pack
-    injection = load_best_pack(handoff_id, max_tokens)
+        if not handoff_id:
+            # No handoff available
+            print("📭 No hay contexto previo disponible.")
+            success = True  # Not an error, just no context
+        else:
+            # Load best pack
+            injection, pack_type = load_best_pack(handoff_id, max_tokens)
 
-    if injection:
-        # SUCCESS - Pack injected (output goes to session)
-        print(injection)
-        return 0
-    else:
-        # No pack fits within budget
-        print(f"📋 Contexto disponible pero excede budget de {max_tokens} tokens.")
-        print(f"Usa /hydrate-cas --depth=s para inyectar manualmente.")
-        return 0
+            if injection:
+                # SUCCESS - Pack injected (output goes to session)
+                print(injection)
+                success = True
+            else:
+                # No pack fits within budget
+                print(f"📋 Contexto disponible pero excede budget de {max_tokens} tokens.")
+                print(f"Usa /hydrate-cas --depth=s para inyectar manualmente.")
+                success = True  # Not an error, just budget exceeded
+
+    except Exception as e:
+        action, message = fallback_manager.handle_failure('SessionStart', e)
+        print(f"⚠️ Context injection failed: {message}", file=sys.stderr)
+        # SessionStart failures should never block
+        success = False
+
+    # Log KPI event
+    try:
+        duration_ms = int((time.time() - start_time) * 1000)
+        kpi_logger = KPILogger()
+        session_id = time.strftime('%Y%m%d-%H%M%S')
+        event = KPIEvent(
+            timestamp=time.strftime('%Y-%m-%dT%H:%M:%S'),
+            session_id=session_id,
+            event_type="pack_injection",
+            data={
+                "duration_ms": duration_ms,
+                "handoff_id": handoff_id or "none",
+                "pack_type": pack_type,
+                "success": success,
+                "max_tokens": max_tokens
+            }
+        )
+        kpi_logger.log_event(event)
+    except Exception:
+        # KPI logging failures should not block
+        pass
+
+    return 0
 
 
 if __name__ == "__main__":

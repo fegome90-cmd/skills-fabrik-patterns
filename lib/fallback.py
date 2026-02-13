@@ -56,7 +56,7 @@ class FallbackPolicyManager:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
         except (YAMLError, OSError) as e:
-            logger.error(f"Failed to load fallback policies from {config_path}: {e}", exc_info=True)
+            logger.error(f"Failed to load fallback policies from {config_path}: {e}")
             # Use safe defaults if config fails to load
             self.policies = self._get_default_policies()
             return

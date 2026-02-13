@@ -140,7 +140,8 @@ class TestNonPythonFilesIgnored:
         script = plugin_root / "scripts" / "auto-fix.py"
 
         md_file = temp_dir / "README.md"
-        original_content = md_file.write_text("# Title\n\nSome content")
+        original_content = "# Title\n\nSome content"
+        md_file.write_text(original_content)
 
         subprocess.run(
             [sys.executable, str(script), str(temp_dir)],
@@ -157,7 +158,8 @@ class TestNonPythonFilesIgnored:
         script = plugin_root / "scripts" / "auto-fix.py"
 
         json_file = temp_dir / "config.json"
-        original_content = json_file.write_text('{"key": "value"}')
+        original_content = '{"key": "value"}'
+        json_file.write_text(original_content)
 
         subprocess.run(
             [sys.executable, str(script), str(temp_dir)],
@@ -174,7 +176,8 @@ class TestNonPythonFilesIgnored:
         script = plugin_root / "scripts" / "auto-fix.py"
 
         yaml_file = temp_dir / "config.yaml"
-        original_content = yaml_file.write_text("key: value\n")
+        original_content = "key: value\n"
+        yaml_file.write_text(original_content)
 
         subprocess.run(
             [sys.executable, str(script), str(temp_dir)],
@@ -191,7 +194,8 @@ class TestNonPythonFilesIgnored:
         script = plugin_root / "scripts" / "auto-fix.py"
 
         txt_file = temp_dir / "notes.txt"
-        original_content = txt_file.write_text("Random notes\n\nMore notes")
+        original_content = "Random notes\n\nMore notes"
+        txt_file.write_text(original_content)
 
         subprocess.run(
             [sys.executable, str(script), str(temp_dir)],

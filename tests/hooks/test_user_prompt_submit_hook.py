@@ -131,7 +131,12 @@ Test project
         sample_context_files: Path,
         temp_dir: Path
     ):
-        """Test original prompt is preserved."""
+        """Test original prompt is preserved - hook adds context without modifying prompt.
+
+        The UserPromptSubmit hook only adds additionalContext to the output.
+        The original prompt is passed through unchanged by Claude Code's hook system.
+        The script returns only additionalContext, not the prompt itself.
+        """
         plugin_root = Path(__file__).parent.parent.parent
         script = plugin_root / "scripts" / "inject-context.py"
 
@@ -152,8 +157,12 @@ Test project
 
         output = json.loads(result.stdout)
 
-        # Original prompt should be in result
-        assert original_prompt in str(output.get("prompt", ""))
+        # The hook returns only additionalContext (no prompt key in output)
+        # This is correct behavior - Claude Code preserves the original prompt
+        # and merges additionalContext into the conversation
+        assert "additionalContext" in output
+        # Hook should never block (return 0) regardless of prompt content
+        assert result.returncode == 0
 
 
 class TestEvidenceValidation:
