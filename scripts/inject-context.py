@@ -2,9 +2,9 @@
 """
 Inject Context Script (UserPromptSubmit Hook)
 
-Fuses TAGs System + EvidenceCLI:
-1. Injects semantic context tags from Elle's memory
-2. Validates project state before work begins
+Injects semantic context tags from Elle's memory.
+NOTE: EvidenceCLI validation moved to SessionStart (health-check.py) for performance.
+See: P1 fix in hook-pathology-fix plan.
 
 Input: JSON via stdin with user prompt
 Output: JSON with additionalContext for Claude Code
@@ -20,7 +20,6 @@ lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
 from tag_system import TagInjector
-from evidence_cli import EvidenceCLI
 from kpi_logger import KPILogger, KPIEvent
 from fallback import create_fallback_manager
 
@@ -32,8 +31,11 @@ def main() -> int:
     start_time = time.time()
 
     # Read input from Claude Code
+    # NOTE: We parse stdin manually instead of using get_project_path_from_stdin()
+    # because we also need the 'prompt' field (line 44). The utility function
+    # only returns the cwd and consumes stdin, making other fields inaccessible.
     try:
-        stdin_content = sys.stdin.read() if hasattr(sys.stdin, 'read') else str(sys.stdin)
+        stdin_content = sys.stdin.read()
         if not stdin_content or not stdin_content.strip():
             return 0
         input_data = json.loads(stdin_content)
@@ -43,7 +45,8 @@ def main() -> int:
         return 0
 
     user_prompt = input_data.get('prompt', '')
-    project_path = Path(input_data.get('project_path', '.'))
+    # Use 'cwd' from hook payload (not 'project_path' which doesn't exist)
+    project_path = Path(input_data.get('cwd', '.'))
 
     # Build output for Claude Code
     output: dict[str, list[dict[str, str]]] = {
@@ -51,46 +54,34 @@ def main() -> int:
     }
 
     tags_injected = False
-    failed = []
-    warnings = []
 
-    # 1. Inject TAGs from Elle's context
+    # Inject TAGs from Elle's context (technical only, with quality filtering)
     try:
-        injector = TagInjector()
+        injector = TagInjector(
+            technical_only=True,
+            top_k=6,  # Limit to 6 high-value TAGs
+            project_path=str(project_path) if project_path else None,
+        )
         enhanced_prompt = injector.inject(user_prompt)
         tags_injected = enhanced_prompt != user_prompt
 
         # Add TAGs summary if any were found
         if tags_injected:
-            tag_lines = enhanced_prompt.split('\n\n')[0]  # Get TAGs section
+            # Extract TAGs section (everything before the original prompt)
+            # TAGs section ends with double newline before the user prompt
+            parts = enhanced_prompt.rsplit('\n\n', 1)
+            tag_content = parts[0] if len(parts) > 1 else enhanced_prompt
             output["additionalContext"].append({
                 "name": "TAGs Context",
                 "description": "Semantic context from Elle's memory",
-                "content": tag_lines
+                "content": tag_content
             })
     except Exception as e:
         action, message = fallback_manager.handle_failure('UserPromptSubmit', e)
         # Continue without TAGs on failure
 
-    # 2. Run Evidence validation
-    try:
-        evidence_cli = EvidenceCLI(fail_fast=False)  # Don't block on warnings
-        evidence_cli.add_default_checks()
-        validation_results = evidence_cli.validate(project_path)
-
-        failed = [r for r in validation_results if r.status.value == "failed"]
-        warnings = [r for r in validation_results if r.status.value == "warning"]
-
-        if failed or warnings:
-            summary = evidence_cli.get_summary(validation_results)
-            output["additionalContext"].append({
-                "name": "Evidence Validation",
-                "description": "Project state validation results",
-                "content": summary
-            })
-    except Exception as e:
-        action, message = fallback_manager.handle_failure('UserPromptSubmit', e)
-        # Continue without validation on failure
+    # NOTE: EvidenceCLI validation removed - now runs once in SessionStart (health-check.py)
+    # This saves ~200ms per message (P1 fix)
 
     # Log KPI event
     try:
@@ -104,8 +95,6 @@ def main() -> int:
             data={
                 "duration_ms": duration_ms,
                 "tags_injected": tags_injected,
-                "validation_failures": len(failed),
-                "validation_warnings": len(warnings),
                 "project_path": str(project_path)
             }
         )

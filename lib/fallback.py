@@ -132,6 +132,13 @@ class FallbackPolicyManager:
                 timeout_action=FallbackAction.CONTINUE,
                 user_message='Auto-fix hook failed, continuing without it'
             ),
+            'PostToolUseFailure': FallbackPolicy(
+                hook_name='PostToolUseFailure',
+                description='Post tool use failure capture hook',
+                on_failure=FallbackAction.LOG_ONLY,
+                timeout_action=FallbackAction.CONTINUE,
+                user_message='Failure capture hook failed, continuing anyway'
+            ),
         }
 
     def get_policy(self, hook_name: str) -> FallbackPolicy:

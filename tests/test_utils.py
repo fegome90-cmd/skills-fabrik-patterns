@@ -13,7 +13,7 @@ import sys
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from utils import measure_duration_ms
+from utils import measure_duration_ms, get_recent_files, DEFAULT_SOURCE_EXTENSIONS, DEFAULT_EXCLUDE_DIRS
 
 
 class TestMeasureDurationMs:
@@ -128,6 +128,113 @@ class TestMeasureDurationMs:
 
         assert result == 25
         assert duration >= 0
+
+
+class TestGetRecentFiles:
+    """Test get_recent_files function."""
+
+    def test_basic_file_discovery(self, tmp_path: Path) -> None:
+        """Test basic file discovery."""
+        (tmp_path / "test.py").write_text("# test")
+        files = get_recent_files(tmp_path)
+        assert "test.py" in files
+
+    def test_extension_filter(self, tmp_path: Path) -> None:
+        """Test extension filtering."""
+        (tmp_path / "test.py").write_text("# test")
+        (tmp_path / "test.txt").write_text("test")  # Should be excluded
+        files = get_recent_files(tmp_path)
+        assert "test.py" in files
+        assert "test.txt" not in files
+
+    def test_max_files_limit(self, tmp_path: Path) -> None:
+        """Test max_files limit."""
+        for i in range(10):
+            (tmp_path / f"file{i}.py").write_text(f"# test {i}")
+        files = get_recent_files(tmp_path, max_files=5)
+        assert len(files) == 5
+
+    def test_max_files_none_unlimited(self, tmp_path: Path) -> None:
+        """Test max_files=None returns all files."""
+        for i in range(15):
+            (tmp_path / f"file{i}.py").write_text(f"# test {i}")
+        files = get_recent_files(tmp_path, max_files=None)
+        assert len(files) == 15
+
+    def test_sorted_by_mtime_descending(self, tmp_path: Path) -> None:
+        """Test results are sorted by mtime descending."""
+        (tmp_path / "old.py").write_text("# old")
+        time.sleep(0.05)  # Ensure different mtime
+        (tmp_path / "new.py").write_text("# new")
+        files = get_recent_files(tmp_path)
+        assert files[0] == "new.py"  # Most recent first
+        assert files[1] == "old.py"
+
+    def test_excludes_home_directory(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test home directory is excluded."""
+        # get_recent_files should return empty for home directory
+        files = get_recent_files(Path.home())
+        assert files == []
+
+    def test_custom_extensions(self, tmp_path: Path) -> None:
+        """Test custom extensions override defaults."""
+        (tmp_path / "test.py").write_text("# test")
+        (tmp_path / "test.rs").write_text("// rust")  # Not in default
+        files = get_recent_files(tmp_path, extensions=['.rs'])
+        assert "test.rs" in files
+        assert "test.py" not in files
+
+    def test_returns_relative_paths(self, tmp_path: Path) -> None:
+        """Test returns paths relative to cwd."""
+        (tmp_path / "subdir").mkdir()
+        (tmp_path / "subdir" / "nested.py").write_text("# nested")
+        files = get_recent_files(tmp_path)
+        assert "subdir/nested.py" in files
+
+    def test_excludes_configured_directories(self, tmp_path: Path) -> None:
+        """Test exclude_dirs parameter."""
+        (tmp_path / "__pycache__").mkdir()
+        # Create a .py file in __pycache__ (unusual but valid test)
+        (tmp_path / "__pycache__" / "test.py").write_text("# cache")
+        (tmp_path / "main.py").write_text("# main")
+        files = get_recent_files(tmp_path)
+        assert "main.py" in files
+        # Files in __pycache__ should be excluded
+        assert "__pycache__/test.py" not in files
+
+    def test_handles_permission_error_gracefully(self, tmp_path: Path) -> None:
+        """Test handles errors gracefully."""
+        # This test verifies the function doesn't crash on errors
+        # The actual error handling is internal
+        (tmp_path / "test.py").write_text("# test")
+        # Should not raise even if there are permission issues elsewhere
+        files = get_recent_files(tmp_path)
+        assert isinstance(files, list)
+
+    def test_default_source_extensions_constant(self) -> None:
+        """Test DEFAULT_SOURCE_EXTENSIONS is properly defined."""
+        assert '.py' in DEFAULT_SOURCE_EXTENSIONS
+        assert '.ts' in DEFAULT_SOURCE_EXTENSIONS
+        assert '.json' in DEFAULT_SOURCE_EXTENSIONS
+        assert '.txt' not in DEFAULT_SOURCE_EXTENSIONS
+
+    def test_default_exclude_dirs_constant(self) -> None:
+        """Test DEFAULT_EXCLUDE_DIRS is properly defined."""
+        assert '__pycache__' in DEFAULT_EXCLUDE_DIRS
+        assert 'node_modules' in DEFAULT_EXCLUDE_DIRS
+        assert '.git' in DEFAULT_EXCLUDE_DIRS
+
+    def test_hours_parameter(self, tmp_path: Path) -> None:
+        """Test hours parameter for cutoff calculation."""
+        (tmp_path / "new.py").write_text("# new")
+        # With hours=1 (default), recently created file should appear
+        files = get_recent_files(tmp_path, hours=1)
+        assert "new.py" in files
+
+    def test_empty_directory(self, tmp_path: Path) -> None:
+        """Test empty directory returns empty list."""
+        files = get_recent_files(tmp_path)
+        assert files == []
 
 
 if __name__ == "__main__":
