@@ -2,9 +2,9 @@
 """
 Inject Context Script (UserPromptSubmit Hook)
 
-Fuses TAGs System + EvidenceCLI:
-1. Injects semantic context tags from Elle's memory
-2. Validates project state before work begins
+Injects semantic context tags from Elle's memory.
+NOTE: EvidenceCLI validation moved to SessionStart (health-check.py) for performance.
+See: P1 fix in hook-pathology-fix plan.
 
 Input: JSON via stdin with user prompt
 Output: JSON with additionalContext for Claude Code
@@ -12,6 +12,7 @@ Output: JSON with additionalContext for Claude Code
 
 import json
 import sys
+import time
 from pathlib import Path
 
 # Add lib directory to path
@@ -19,56 +20,88 @@ lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
 from tag_system import TagInjector
-from evidence_cli import EvidenceCLI
+from kpi_logger import KPILogger, KPIEvent
+from fallback import create_fallback_manager
 
 
 def main() -> int:
     """Inject context tags and validate evidence."""
+    plugin_root = Path(__file__).parent.parent
+    fallback_manager = create_fallback_manager(plugin_root)
+    start_time = time.time()
+
     # Read input from Claude Code
+    # NOTE: We parse stdin manually instead of using get_project_path_from_stdin()
+    # because we also need the 'prompt' field (line 44). The utility function
+    # only returns the cwd and consumes stdin, making other fields inaccessible.
     try:
-        input_data = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        # No JSON input - might be direct invocation for testing
-        print("⚠️ No JSON input received", file=sys.stderr)
+        stdin_content = sys.stdin.read()
+        if not stdin_content or not stdin_content.strip():
+            return 0
+        input_data = json.loads(stdin_content)
+    except (json.JSONDecodeError, ValueError, AttributeError, OSError) as e:
+        action, message = fallback_manager.handle_failure('UserPromptSubmit', e)
+        # UserPromptSubmit failures should never block - always return 0
         return 0
 
     user_prompt = input_data.get('prompt', '')
-    project_path = Path(input_data.get('project_path', '.'))
-
-    # 1. Inject TAGs from Elle's context
-    injector = TagInjector()
-    enhanced_prompt = injector.inject(user_prompt)
-
-    # 2. Run Evidence validation
-    evidence_cli = EvidenceCLI(fail_fast=False)  # Don't block on warnings
-    evidence_cli.add_default_checks()
-    validation_results = evidence_cli.validate(project_path)
+    # Use 'cwd' from hook payload (not 'project_path' which doesn't exist)
+    project_path = Path(input_data.get('cwd', '.'))
 
     # Build output for Claude Code
     output: dict[str, list[dict[str, str]]] = {
         "additionalContext": []
     }
 
-    # Add TAGs summary if any were found
-    if enhanced_prompt != user_prompt:
-        tag_lines = enhanced_prompt.split('\n\n')[0]  # Get TAGs section
-        output["additionalContext"].append({
-            "name": "TAGs Context",
-            "description": "Semantic context from Elle's memory",
-            "content": tag_lines
-        })
+    tags_injected = False
 
-    # Add evidence validation summary
-    failed = [r for r in validation_results if r.status.value == "failed"]
-    warnings = [r for r in validation_results if r.status.value == "warning"]
+    # Inject TAGs from Elle's context (technical only, with quality filtering)
+    try:
+        injector = TagInjector(
+            technical_only=True,
+            top_k=6,  # Limit to 6 high-value TAGs
+            project_path=str(project_path) if project_path else None,
+        )
+        enhanced_prompt = injector.inject(user_prompt)
+        tags_injected = enhanced_prompt != user_prompt
 
-    if failed or warnings:
-        summary = evidence_cli.get_summary(validation_results)
-        output["additionalContext"].append({
-            "name": "Evidence Validation",
-            "description": "Project state validation results",
-            "content": summary
-        })
+        # Add TAGs summary if any were found
+        if tags_injected:
+            # Extract TAGs section (everything before the original prompt)
+            # TAGs section ends with double newline before the user prompt
+            parts = enhanced_prompt.rsplit('\n\n', 1)
+            tag_content = parts[0] if len(parts) > 1 else enhanced_prompt
+            output["additionalContext"].append({
+                "name": "TAGs Context",
+                "description": "Semantic context from Elle's memory",
+                "content": tag_content
+            })
+    except Exception as e:
+        action, message = fallback_manager.handle_failure('UserPromptSubmit', e)
+        # Continue without TAGs on failure
+
+    # NOTE: EvidenceCLI validation removed - now runs once in SessionStart (health-check.py)
+    # This saves ~200ms per message (P1 fix)
+
+    # Log KPI event
+    try:
+        duration_ms = int((time.time() - start_time) * 1000)
+        kpi_logger = KPILogger()
+        session_id = time.strftime('%Y%m%d-%H%M%S')
+        event = KPIEvent(
+            timestamp=time.strftime('%Y-%m-%dT%H:%M:%S'),
+            session_id=session_id,
+            event_type="context_injection",
+            data={
+                "duration_ms": duration_ms,
+                "tags_injected": tags_injected,
+                "project_path": str(project_path)
+            }
+        )
+        kpi_logger.log_event(event)
+    except Exception as e:
+        action, message = fallback_manager.handle_failure('UserPromptSubmit', e)
+        # KPI logging failures should not block
 
     # Print output for Claude Code
     print(json.dumps(output, indent=2))

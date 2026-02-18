@@ -15,6 +15,7 @@ sys.path.insert(0, str(lib_dir))
 
 from ruff_formatter import RuffFormatter, RuffResult
 from fp_utils import (
+    Success, Failure, Some, Nothing, Maybe,
     load_config, validate_project_structure,
     safe_write_file, map_success, map_failure,
     get_or_log, parse_and_validate_config,
@@ -59,10 +60,10 @@ class TestRuffFormatterSimple:
         assert "1 file" in result.output.lower()
 
     @pytest.mark.unit
-    def test_check_returns_exit_code(self):
+    def test_check_returns_exit_code(self, tmp_path):
         """check_and_fix should return proper exit code."""
         formatter = RuffFormatter()
-        
+
         test_file = tmp_path / "test_check.py"
         test_file.write_text("def foo():return 1", encoding='utf-8')
         
@@ -86,7 +87,7 @@ class TestRuffFormatterSimple:
         assert result.formatted is True
 
     @pytest.mark.unit
-    def test_config_args_passed(self):
+    def test_config_args_passed(self, tmp_path):
         """Config args should be passed correctly."""
         config_path = tmp_path / "ruff.toml"
         config_path.write_text("[line-length]\nmax-line-length = 100", encoding='utf-8')
@@ -109,10 +110,10 @@ class TestFPUtilsSimple:
     @pytest.mark.unit
     def test_load_config_works(self):
         """load_config should load YAML config."""
-        config_path = Path("/dev/null")  # Use null device
-        
+        config_path = Path("/nonexistent/config.yaml")
+
         result = load_config(config_path)
-        
+
         # Should be Failure (file not found)
         assert isinstance(result, Failure)
 
@@ -140,12 +141,13 @@ class TestFPUtilsSimple:
         with tempfile.TemporaryDirectory() as tmpdir:
             test_file = Path(tmpdir) / "test_write.txt"
             content = "Hello, World!"
-            
+
             result = safe_write_file(test_file, content)
-        
-        assert isinstance(result, Success)
-        assert test_file.exists()
-        assert test_file.read_text(encoding='utf-8') == content
+
+            # Verify inside the context manager where file exists
+            assert isinstance(result, Success)
+            assert test_file.exists()
+            assert test_file.read_text(encoding='utf-8') == content
 
     @pytest.mark.unit
     def test_map_success_works(self):
@@ -164,11 +166,9 @@ class TestFPUtilsSimple:
     @pytest.mark.unit
     def test_get_or_log_unwraps_success(self):
         """get_or_log should unwrap Success."""
-        from fp_utils import get_or_log, Success
-        
-        result = get_or_log(Success(42), 999)
-        
-        assert isinstance(result, Success)
+        result = get_or_log(Success(42), 999, "test_operation")
+
+        # get_or_log returns the unwrapped value, not a Result
         assert result == 42
 
     @pytest.mark.unit
@@ -180,15 +180,16 @@ gates:
   check-gate:
     command: echo "test"
 """, encoding='utf-8')
-        
+
         result = parse_and_validate_config(
             config_path,
             required_keys=["gates"]
         )
-        
+
         assert isinstance(result, Success)
         config = result.unwrap()
-        assert "check-gate" in config
+        assert "gates" in config
+        assert "check-gate" in config["gates"]
 
 
 if __name__ == "__main__":

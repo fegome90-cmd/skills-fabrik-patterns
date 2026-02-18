@@ -13,9 +13,19 @@ Output: Quality gate results and any critical alerts
 
 import asyncio
 import json
+import logging
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
+
+# ANTILOOP GUARD (P3 fix)
+# Prevent infinite loop if quality gates somehow trigger another Stop hook
+if os.environ.get("SFP_STOP_ACTIVE") == "1":
+    print(json.dumps({"continue": False}))
+    sys.exit(0)
+os.environ["SFP_STOP_ACTIVE"] = "1"
 
 # Add lib directory to path
 lib_dir = Path(__file__).parent.parent / "lib"
@@ -24,6 +34,8 @@ sys.path.insert(0, str(lib_dir))
 from quality_gates import QualityGateRunner, QualityGatesOrchestrator
 from alerts import QualityAlerts
 from fallback import create_fallback_manager, FallbackAction
+from kpi_logger import KPILogger, KPIEvent
+from utils import get_project_path_from_stdin, get_recent_files
 
 
 async def run_quality_gates(project_path: Path, changed_files: list[str], tier: str = "deep") -> tuple[list[Any], list[Any]]:
@@ -76,30 +88,21 @@ def main() -> int:
     plugin_root = Path(__file__).parent.parent
     fallback_manager = create_fallback_manager(plugin_root)
 
-    # Get project path from current directory
-    project_path = Path.cwd()
+    # Get project path from hook payload via stdin (fallback to cwd)
+    project_path = get_project_path_from_stdin()
 
     # For now, check for recently modified files (would come from Claude Code session data)
     # In real hook, changed_files would be in the input JSON
-    changed_files = []
     try:
-        # Get files modified in last hour as approximation
-        import time
-        cutoff = time.time() - 3600
-        for f in project_path.rglob("*"):
-            if f.is_file() and f.stat().st_mtime > cutoff:
-                # Filter to source files
-                if f.suffix in ['.py', '.ts', '.tsx', '.js', '.jsx', '.md']:
-                    changed_files.append(str(f.relative_to(project_path)))
+        changed_files = get_recent_files(project_path, hours=1, max_files=50)
     except (OSError, PermissionError) as e:
-        import logging
         logging.error(f"Failed to discover changed files in {project_path}: {e}")
+        changed_files = []
 
     # Run gates asynchronously with specified tier
     try:
         results, alerts = asyncio.run(run_quality_gates(project_path, changed_files, tier=args.tier))
     except Exception as e:
-        import logging
         # Handle failure with fallback policy
         action, user_message = fallback_manager.handle_failure("Stop", e, is_timeout=False)
 
@@ -118,6 +121,22 @@ def main() -> int:
     passed = sum(1 for r in results if r.status.value == "passed")
     failed = sum(1 for r in results if r.status.value == "failed")
     timed_out = sum(1 for r in results if r.status.value == "timeout")
+
+    # Calculate total duration for KPI
+    total_duration_ms = sum(r.duration_ms for r in results if hasattr(r, 'duration_ms'))
+
+    # Log KPI event
+    session_id = time.strftime('%Y%m%d-%H%M%S')
+    kpi_logger = KPILogger()
+    gate_names = [r.gate_name for r in results if hasattr(r, 'gate_name')]
+    kpi_logger.log_quality_gates(
+        session_id=session_id,
+        passed=passed,
+        failed=failed,
+        timed_out=timed_out,
+        duration_ms=total_duration_ms,
+        gate_names=gate_names
+    )
 
     print(f"📊 Quality Gates: {passed} passed, {failed} failed, {timed_out} timeout")
 

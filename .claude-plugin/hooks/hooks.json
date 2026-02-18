@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/health-check.py",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -33,6 +33,16 @@
             "async": true
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/stop-handoff.py",
+            "timeout": 30,
+            "async": true
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -40,8 +50,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/handoff-backup.py",
-            "timeout": 30
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/pre-compact-rescue.py",
+            "timeout": 5
           }
         ]
       }
@@ -53,6 +63,17 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/auto-fix.py",
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/capture-failure.py",
+            "timeout": 5
           }
         ]
       }

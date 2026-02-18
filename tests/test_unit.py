@@ -59,7 +59,10 @@ class TestTagSystem:
 
     def test_tag_extractor_init(self):
         extractor = TagExtractor()
-        assert extractor.context_dir == Path.home() / ".claude" / ".context"
+        # Should resolve to either core/ (new structure) or legacy .context
+        expected_core = Path.home() / ".claude" / ".context" / "core"
+        expected_legacy = Path.home() / ".claude" / ".context"
+        assert extractor.context_dir in [expected_core, expected_legacy]
 
     def test_tag_injector(self):
         injector = TagInjector()

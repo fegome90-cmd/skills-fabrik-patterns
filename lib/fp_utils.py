@@ -15,8 +15,8 @@ from returns.curry import partial
 from returns.result import Result, Success, Failure, safe
 from returns.maybe import Maybe, Nothing, Some
 from returns.io import IO, IOSuccess
-from returns.functions import identity, raise_exception
-from returns.pipeline import flow
+from returns.functions import identity, raise_exception, compose
+from returns.pipeline import flow, pipe
 from returns.pointfree import bind
 
 from logger import get_logger, LogLevel
@@ -449,42 +449,76 @@ def safe_write_file(
 # ============================================================================
 
 def map_success(
-    result: Result[T, E],
-    mapper: Callable[[T], U]
-) -> Result[U, E]:
+    mapper: Callable[[T], U],
+    results: list[Result[T, E]] | Result[T, E]
+) -> Result[list[U], E] | Result[U, E]:
     """
-    Map Success value through a function.
+    Map Success value(s) through a function.
 
     If result is Success(x), returns Success(mapper(x)).
     If result is Failure(e), returns Failure(e) unchanged.
+    Can also accept a list of Results and return Success of mapped values
+    or first Failure encountered.
+
+    Args:
+        mapper: Function to apply to success values
+        results: Single Result or list of Results to transform
+
+    Returns:
+        Success with transformed value(s) or first Failure
     """
-    if isinstance(result, Success):
+    # Handle list of results
+    if isinstance(results, list):
+        mapped_values: list[U] = []
+        for result in results:
+            if isinstance(result, Failure):
+                return result  # Return first failure
+            mapped_values.append(mapper(result.unwrap()))
+        return Success(mapped_values)
+
+    # Handle single result
+    if isinstance(results, Success):
         try:
-            return Success(mapper(result.unwrap()))
+            return Success(mapper(results.unwrap()))
         except Exception as e:
             # Re-raise to be caught by caller
             raise_exception(e)
-    return result  # type: ignore
+    return results  # type: ignore
 
 
 def map_failure(
-    result: Result[T, E],
-    mapper: Callable[[E], E]
-) -> Result[T, E]:
+    mapper: Callable[[T], Result[U, E]],
+    results: list[Result[T, E]] | Result[T, E]
+) -> Result[list[U], E] | Result[U, E]:
     """
-    Map Failure error through a function.
+    Map Failure values through a function that returns Results.
 
-    If result is Failure(e), returns Failure(mapper(e)).
-    If result is Success(x), returns Success(x) unchanged.
+    If any result is Failure, returns that Failure.
+    If all are Success, applies mapper and collects results.
+
+    Args:
+        mapper: Function that takes a value and returns a Result
+        results: Single Result or list of Results to transform
+
+    Returns:
+        Success with transformed value(s) or first Failure
     """
-    if isinstance(result, Failure):
-        try:
-            return Failure(mapper(result.failure()))
-        except Exception:
-            # Re-raise to be caught by caller
-            raise
-    # Type narrowing: result is Success[T, E] here
-    return result
+    # Handle list of results
+    if isinstance(results, list):
+        for result in results:
+            mapped = mapper(result.unwrap() if isinstance(result, Success) else result.failure())
+            if isinstance(mapped, Failure):
+                return mapped
+        # Return first failure from mapper
+        return Failure(Exception("map_failure: unexpected success path"))
+
+    # Handle single result - apply mapper
+    if isinstance(results, Failure):
+        # Return the failure as-is
+        return results
+
+    # Apply mapper to success
+    return mapper(results.unwrap())  # type: ignore
 
 
 def get_or_log(
